@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ΔBD FAMILY WEB</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Audiowide&family=Sora:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Backgrounds -->
+<canvas class="bg" id="homeWeb" aria-label="Family tree web"></canvas>
+
+<!-- Home screen -->
+<!-- Opening screen: spinning globe -->
+<section class="screen intro" id="introScreen" aria-label="Welcome">
+  <canvas id="globe" aria-hidden="true"></canvas>
+  <div class="intro-content" id="introContent">
+    <h1 class="intro-title">ΔBD <span class="web">FAMILY WEB</span></h1>
+    <p class="intro-sub">Connecting families, clans and friends</p>
+    <button class="white-clay" type="button" id="enterBtn">Enter</button>
+  </div>
+</section>
+
+<div class="screen hidden" id="homeScreen">
+  <header>
+    <h1 class="brand">ΔBD <span class="web">FAMILY WEB</span></h1>
+    <div class="header-row">
+      <div class="icon-stack">
+        <button class="icon-btn" type="button" id="aboutBtn" aria-label="About us" title="About us"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r="0.6" fill="currentColor"/></svg></button>
+        <button class="icon-btn" type="button" id="helpBtn" aria-label="Help" title="Help"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.2 1-1.2 1.9"/><circle cx="12" cy="16.6" r="0.6" fill="currentColor"/></svg></button>
+      </div>
+      <div class="search-wrap">
+      <input class="search-input" id="homeSearch" type="search" placeholder="Search clan or family" autocomplete="off" aria-label="Search clan or family">
+      <div class="search-results" id="searchResults" role="listbox"></div>
+    </div>
+      <nav class="actions" aria-label="Main">
+        <button class="white-clay" type="button" id="addBtn">Add project</button>
+      </nav>
+    </div>
+  </header>
+
+  <p class="hint" id="hint">Drag to explore the galaxy. Ctrl + scroll or pinch to zoom between planets and deep space. Tap a planet or object to visit it. Tap a crest to open its family.</p>
+
+  <div class="zoom-ctrl" aria-label="Zoom controls">
+    <button class="white-clay zoom-btn" id="zoomIn" type="button" aria-label="Zoom in">+</button>
+    <button class="white-clay zoom-btn" id="zoomOut" type="button" aria-label="Zoom out">&minus;</button>
+    <button class="white-clay zoom-btn" id="zoomReset" type="button" aria-label="Reset zoom">Reset</button>
+  </div>
+
+  <button class="icon-btn fs-btn" type="button" id="fsHome" aria-label="Full screen view" title="Full screen view">
+    <svg class="i-enter" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+    <svg class="i-exit" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+  </button>
+  <div class="tip" id="tip" role="status"></div>
+</div>
+
+<!-- Help: step by step guide -->
+<div class="modal hidden" id="helpModal" role="dialog" aria-modal="true" aria-labelledby="hpTitle">
+  <div class="modal-card help-card">
+    <p class="lbl hp-count" id="hpCount"></p>
+    <div class="hp-stage" id="hpStage"></div>
+    <h2 id="hpTitle"></h2>
+    <p class="hp-text" id="hpText"></p>
+    <div class="hp-dots" id="hpDots"></div>
+    <div class="hp-nav">
+      <button class="white-clay dark" type="button" id="hpPrev">Back</button>
+      <button class="white-clay dark" type="button" id="hpClose">Close</button>
+      <button class="white-clay" type="button" id="hpNext">Next</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- Projects page -->
+<section class="screen page hidden" id="projectScreen" aria-labelledby="projectsTitle">
+  <div class="page-head">
+    <div>
+      <p class="page-brand">ΔBD <span class="web">FAMILY WEB</span></p>
+      <h1 class="page-title" id="projectsTitle">Projects</h1>
+    </div>
+    <div class="page-actions">
+      <button class="white-clay dark" type="button" id="backBtn">Back</button>
+      <button class="white-clay" type="button" id="newProjectBtn">+ Add new project</button>
+      <button class="icon-btn" type="button" id="aboutBtnProjects" aria-label="About us" title="About us"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r="0.6" fill="currentColor"/></svg></button>
+      <button class="icon-btn" type="button" id="settingsBtn" aria-label="Settings" title="Settings">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="page-body">
+    <p class="empty" id="emptyMsg">No projects yet. Tap "+ Add new project" to start.</p>
+    <div class="project-grid" id="projectGrid"></div>
+  </div>
+</section>
+
+<!-- Family tree (web thread) -->
+<section class="screen tree hidden" id="treeScreen" aria-label="Family tree">
+  <canvas id="treeCanvas"></canvas>
+  <div class="tree-head">
+    <div>
+      <p class="page-brand">ΔBD <span class="web">FAMILY WEB</span></p>
+      <h1 class="page-title" id="treeTitle">Family tree</h1>
+    </div>
+    <div class="page-actions">
+      <button class="icon-btn" type="button" id="undoBtn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+      <button class="icon-btn" type="button" id="redoBtn" aria-label="Redo" title="Redo (Ctrl+Y)" disabled><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+      <button class="icon-btn" type="button" id="langBtn" aria-label="Language" title="Language"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg></button>
+      <button class="white-clay dark" type="button" id="treeBackBtn">Back</button>
+      <button class="white-clay" type="button" id="addPersonBtn">+ Add person</button>
+    </div>
+  </div>
+  <p class="tree-hint" id="treeHint"></p>
+  <button class="icon-btn fs-btn" type="button" id="fsTree" aria-label="Full screen view" title="Full screen view">
+    <svg class="i-enter" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+    <svg class="i-exit" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>
+  </button>
+  <button class="icon-btn clan-btn" type="button" id="clanViewBtn" aria-label="Clan view (galaxy)" title="Clan view (galaxy)"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="2.6" fill="currentColor"/><ellipse cx="12" cy="12" rx="9.5" ry="4.2" transform="rotate(-25 12 12)"/><circle cx="19.2" cy="8.6" r="1.3" fill="currentColor"/><circle cx="4.8" cy="15.4" r="1.3" fill="currentColor"/></svg></button>
+  <div class="person-card" id="personCard" role="dialog" aria-live="polite">
+    <h3 id="pcName"></h3>
+    <p id="pcInfo"></p>
+    <div class="person-card-actions">
+      <button class="white-clay" type="button" id="pcAddRelative">Add relative</button>
+      <button class="white-clay dark" type="button" id="pcDelete">Delete</button>
+      <button class="white-clay" type="button" id="pcModify">Modify</button>
+      <button class="white-clay dark" type="button" id="pcClose">Close</button>
+    </div>
+  </div>
+</section>
+
+<!-- Clan or family members -->
+<div class="modal hidden" id="groupModal" role="dialog" aria-modal="true" aria-labelledby="gTitle">
+  <div class="modal-card modal-scroll">
+    <p class="lbl" id="gKind"></p>
+    <h2 id="gTitle"></h2>
+    <p class="group-sub" id="gSub"></p>
+    <div class="member-list" id="gList"></div>
+    <div class="form-actions">
+      <button class="white-clay dark" type="button" id="gClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add person form -->
+<div class="modal hidden" id="personModal" role="dialog" aria-modal="true" aria-labelledby="pModalTitle">
+  <div class="modal-card modal-scroll">
+    <h2 id="pModalTitle">Add family or friend</h2>
+    <form id="personForm" novalidate>
+      <div class="field-row">
+        <div class="field">
+          <label for="pFirst">First name</label>
+          <input class="input" id="pFirst" type="text" placeholder="First name" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="pLast">Last name</label>
+          <input class="input" id="pLast" type="text" placeholder="Last name" autocomplete="off">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="pClan">Clan name</label>
+        <input class="input" id="pClan" type="text" list="clanList" placeholder="Type a clan name" autocomplete="off" maxlength="24">
+        <datalist id="clanList"></datalist>
+      </div>
+
+      <div class="field">
+        <span class="lbl">Gender</span>
+        <div class="choices">
+          <label class="chip"><input type="radio" name="gender" value="male"><span>Male</span></label>
+          <label class="chip"><input type="radio" name="gender" value="female"><span>Female</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="lbl">Status</span>
+        <div class="choices">
+          <label class="chip"><input type="radio" name="status" value="living"><span>Living</span></label>
+          <label class="chip"><input type="radio" name="status" value="deceased"><span>Deceased</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="lbl">Date of birth (optional)</span>
+        <input class="input" id="pDob" type="date">
+      </div>
+
+      <details class="field local-names" id="localNamesBox">
+        <summary class="lbl">Names in other languages (optional)</summary>
+        <div id="localNameRows"></div>
+      </details>
+
+      <div class="field">
+        <span class="lbl">Photo</span>
+        <div class="photo-row">
+          <div class="photo-prev">
+            <img id="pPreview" class="is-hidden" alt="Selected photo">
+            <span id="pPlaceholder">No photo</span>
+          </div>
+          <div class="photo-btns">
+            <button class="white-clay dark" type="button" id="galleryBtn">From gallery</button>
+            <button class="white-clay dark" type="button" id="fileBtn">From files</button>
+          </div>
+        </div>
+        <input type="file" id="pGalleryInput" accept="image/*" class="sr-only-file" tabindex="-1" aria-hidden="true">
+        <input type="file" id="pFileInput" accept="image/*,.heic,.heif,.webp" class="sr-only-file" tabindex="-1" aria-hidden="true">
+      </div>
+
+      <div class="field" id="linkGroup">
+        <span class="lbl">Connect to and choose the relation (e.g. Father, Sibling, Friend)</span>
+        <div class="link-list" id="pLinks"></div>
+      </div>
+
+      <p class="form-error" id="pError" role="alert"></p>
+      <div class="form-actions">
+        <button class="clay" type="submit">Save to web</button>
+        <button class="white-clay dark" type="button" id="pCancel">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Settings: import and export -->
+<section class="screen page hidden" id="settingsScreen" aria-labelledby="settingsTitle">
+  <div class="page-head">
+    <div>
+      <p class="page-brand">ΔBD <span class="web">FAMILY WEB</span></p>
+      <h1 class="page-title" id="settingsTitle">Settings</h1>
+    </div>
+    <div class="page-actions">
+      <button class="white-clay dark" type="button" id="settingsBackBtn">Back</button>
+    </div>
+  </div>
+  <div class="page-body settings-grid">
+    <section class="setting-card" aria-labelledby="exportTitle">
+      <h2 id="exportTitle">Export data</h2>
+      <p>Saves every project, with its clan and family members and their relations, as a file on this device. The file name includes the date.</p>
+      <div class="row">
+        <button class="clay" type="button" id="exportCsvBtn" style="width:auto;padding:14px 22px">Export as CSV</button>
+        <button class="clay" type="button" id="exportJsonBtn" style="width:auto;padding:14px 22px">Export as JSON</button>
+      </div>
+      <p class="form-error" id="exportMsg" role="status"></p>
+      <button class="white-clay dark" type="button" id="showTextBtn" style="margin-top:12px">Show data as text</button>
+      <textarea class="input is-hidden" id="exportBox" rows="8" readonly style="margin-top:12px;font-family:monospace;font-size:0.8rem"></textarea>
+    </section>
+    <section class="setting-card" aria-labelledby="importTitle">
+      <h2 id="importTitle">Import data</h2>
+      <p>Choose a CSV or JSON file. Each person in it is added to the project named in the file, and a project that does not exist yet is created.</p>
+      <div class="row">
+        <button class="white-clay dark" type="button" id="chooseFileBtn">Choose file</button>
+        <span class="file-name" id="chosenName">No file chosen</span>
+      </div>
+      <input type="file" id="importInput" accept=".csv,.json,text/csv,application/json" class="sr-only-file" tabindex="-1" aria-hidden="true">
+      <div class="import-preview" id="importPreview"></div>
+      <div class="form-actions">
+        <button class="clay is-hidden" type="button" id="importBtn" disabled>Import into projects</button>
+      </div>
+      <p class="form-error" id="importMsg" role="status"></p>
+    </section>
+  </div>
+</section>
+
+<!-- Shared project (read-only, opened from a shared link) -->
+<section class="screen page hidden" id="sharedScreen" aria-labelledby="sharedTitle">
+  <div class="page-head">
+    <div>
+      <p class="page-brand">ΔBD <span class="web">FAMILY WEB</span></p>
+      <h1 class="page-title" id="sharedTitle">Shared project</h1>
+    </div>
+    <div class="page-actions">
+      <button class="white-clay dark" type="button" id="sharedBackBtn">Back</button>
+    </div>
+  </div>
+  <div class="page-body about-body">
+    <section class="setting-card">
+      <p id="sharedDesc"></p>
+    </section>
+    <div class="member-list" id="sharedList"></div>
+  </div>
+</section>
+
+<!-- Language picker -->
+<div class="modal hidden" id="langModal" role="dialog" aria-modal="true" aria-labelledby="langTitle">
+  <div class="modal-card">
+    <h2 id="langTitle">Language</h2>
+    <div class="member-list" id="langList"></div>
+    <div class="form-actions">
+      <button class="white-clay dark" type="button" id="langClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm delete -->
+<div class="modal hidden" id="confirmModal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmText">
+  <div class="modal-card">
+    <h2 id="confirmTitle">Are you sure?</h2>
+    <p class="group-sub" id="confirmText"></p>
+    <div class="form-actions">
+      <button class="clay" type="button" id="confirmYes">Yes, delete</button>
+      <button class="white-clay dark" type="button" id="confirmNo">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- About us -->
+<section class="screen page hidden" id="aboutScreen" aria-labelledby="aboutTitle">
+  <div class="page-head">
+    <div>
+      <p class="page-brand">ΔBD <span class="web">FAMILY WEB</span></p>
+      <h1 class="page-title" id="aboutTitle">About us</h1>
+    </div>
+    <div class="page-actions">
+      <button class="white-clay dark" type="button" id="aboutBackBtn">Back</button>
+    </div>
+  </div>
+  <div class="page-body about-body">
+    <section class="setting-card">
+      <h2>What is ΔBD Family Web?</h2>
+      <p>ΔBD Family Web lets you build your family tree as a web. Every person is a point, every connection is a thread, and every family or clan has its own crest. Your family, friends and their relations all join into one connected web, which you can explore like a galaxy.</p>
+    </section>
+    <section class="setting-card">
+      <h2>How it works</h2>
+      <p><strong>Home:</strong> The home page is a galaxy of family webs. Move around by dragging, scrolling or using the arrow keys. Zoom with Ctrl + scroll, pinch, the + and − buttons (hold them to keep zooming), or the + and − keys. Press 0 or Reset to return to the start.</p>
+      <p><strong>Space:</strong> Tap a planet, moon, exoplanet, galaxy or black hole to fly there. Zoom in close to see its name and its surface.</p>
+      <p><strong>Clans:</strong> Each clan you create appears in the galaxy with its own crest. Tap a clan to see its members and the clans related to it.</p>
+      <p><strong>Search:</strong> Use the search bar at the top of the home page to find a clan, a family name or a person.</p>
+      <p><strong>Projects:</strong> Press <em>+ Add new project</em> to start a project. Each project has its own family tree. Use the ⋮ menu on a project to rename, save, share a read-only link or delete it. Anyone with the link can view the shared project.</p>
+      <p><strong>Family tree:</strong> The first person you add is you (me). Add family and friends, then connect each one to people already in the web and choose how they are related: Father, Mother, Sibling, Friend, Spouse, Child or Other. Tap a person to see their details, add a relative, or modify them. Drag a person to move them, and drag the background to look around.</p>
+      <p><strong>Relatives:</strong> Give each person a first name, last name, clan, gender (male or female), status (living or deceased), and an optional photo from your gallery or files.</p>
+      <p><strong>Settings:</strong> Press the gear icon on the projects page to export all your data as CSV or JSON, or to import a file. An imported file adds its people to the project named in the file.</p>
+    </section>
+    <section class="setting-card">
+      <h2>Created by</h2>
+      <p><strong>ABDULLAH</strong></p>
+      <p>12 NOV 2026</p>
+    </section>
+    <section class="setting-card">
+      <h2>Good to know</h2>
+      <p>Your projects, family members and clans are kept while this page is open. Export your data from Settings to keep a copy, and import it again later to restore it.</p>
+    </section>
+  </div>
+</section>
+
+<!-- Rename project -->
+<div class="modal hidden" id="renameModal" role="dialog" aria-modal="true" aria-labelledby="renameTitle">
+  <div class="modal-card">
+    <h2 id="renameTitle">Rename project</h2>
+    <form id="renameForm" novalidate>
+      <div class="field">
+        <label for="renTitle">Project title</label>
+        <input class="input" id="renTitle" type="text" autocomplete="off" maxlength="60">
+      </div>
+      <div class="field">
+        <label for="renDesc">Description</label>
+        <textarea class="input" id="renDesc" maxlength="300" placeholder="What is this project about?"></textarea>
+      </div>
+      <p class="form-error" id="renError" role="alert"></p>
+      <div class="form-actions">
+        <button class="clay" type="submit">Save name</button>
+        <button class="white-clay dark" type="button" id="renCancel">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Add project form -->
+<div class="modal hidden" id="projectModal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+  <div class="modal-card">
+    <h2 id="modalTitle">New project</h2>
+    <form id="projectForm" novalidate>
+      <div class="field">
+        <label for="projTitle">Project title</label>
+        <input class="input" id="projTitle" type="text" placeholder="Name your project" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="projDesc">Description</label>
+        <textarea class="input" id="projDesc" placeholder="What is this project about?"></textarea>
+      </div>
+      <p class="form-error" id="projError" role="alert"></p>
+      <div class="form-actions">
+        <button class="clay" type="submit">Create project</button>
+        <button class="white-clay dark" type="button" id="cancelProjectBtn">Cancel</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
