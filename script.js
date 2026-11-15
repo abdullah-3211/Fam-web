@@ -1,4 +1,3 @@
-// ΔBD FAMILY WEB - scripts
 (() => {
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const pointer = { x: -9999, y: -9999, active: false };
@@ -1747,10 +1746,18 @@
   }
 
   function deleteProject(i) {
-    projects.splice(i, 1);
-    persistProjects();
-    renderProjects();
-    toast('Project deleted');
+    const p = projects[i];
+    if (!p) return;
+    askConfirm('Delete project?', '"' + p.title + '" and all its people will be removed.', () => {
+      const index = projects.indexOf(p);
+      if (index < 0) return;
+      projects.splice(index, 1);
+      rebuildClanRegistry();
+      rebuildPairs();
+      safePersist();
+      renderProjects();
+      toast('Project deleted');
+    });
   }
 
   const ARTIFACT_URL = "https://claude.ai/artifact/AF3EGuF7rs1tzPCUSkMyJ4";
@@ -1849,6 +1856,7 @@
         menuItem('Rename', () => openRename(i)),
         menuItem('Save', () => saveProject(i)),
         menuItem('Share', () => shareProject(i)),
+        menuItem('Settings', () => { renderProjects(); showSettings(p); }),
         menuItem('Delete', () => deleteProject(i), true)
       );
 
@@ -1868,7 +1876,13 @@
         meta.append(badge);
       }
 
-      card.append(top, d, meta);
+      const cv = document.createElement('button');
+      cv.type = 'button';
+      cv.className = 'white-clay';
+      cv.style.marginTop = '12px';
+      cv.textContent = 'Clan view';
+      cv.addEventListener('click', (e) => { e.stopPropagation(); pgFrom = 'projects'; openProjectGalaxy(p); });
+      card.append(top, d, meta, cv);
       card.addEventListener('click', () => openTree(p));
       projectGrid.append(card);
     });
@@ -2092,7 +2106,7 @@
 
   function zoomTreeAt(px, py, factor) {
     const before = toWorld(px, py);
-    tv.zoom = Math.min(4, Math.max(0.25, tv.zoom * factor));
+    tv.zoom = Math.min(4, Math.max(0.06, tv.zoom * factor));
     tv.camX = before.x - (px - tv.W / 2) / tv.zoom;
     tv.camY = before.y - (py - tv.H / 2) / tv.zoom;
   }
@@ -2125,6 +2139,50 @@
     return { x, y };
   }
 
+  /* ----- Auto family links: spouses share their children -----
+     A link on a person means "this person is <rel> of that person".
+     Child of P:  child.links has { id: P, rel: 'Child' }   Parent of Q: parent.links has { id: Q, rel: 'Father' | 'Mother' } */
+  function linkedAny(a, b) {
+    return a.links.some((l) => l.id === b.id) || b.links.some((l) => l.id === a.id);
+  }
+  function spousesOf(x) {
+    return people().filter((q) => q.id !== x.id && (
+      x.links.some((l) => l.id === q.id && l.rel === 'Spouse') ||
+      q.links.some((l) => l.id === x.id && l.rel === 'Spouse')));
+  }
+  function parentsOf(x) {
+    return people().filter((q) => q.id !== x.id && (
+      x.links.some((l) => l.id === q.id && l.rel === 'Child') ||
+      q.links.some((l) => l.id === x.id && (l.rel === 'Father' || l.rel === 'Mother'))));
+  }
+  function childrenOf(x) {
+    return people().filter((q) => q.id !== x.id && parentsOf(q).some((pp) => pp.id === x.id));
+  }
+  // Run after a person is added or modified. Returns the people whose links changed.
+  function autoSpouseChildren(x) {
+    const changed = new Set();
+    const addChild = (child, parent) => {
+      if (!child || !parent || child.id === parent.id || linkedAny(child, parent)) return;
+      child.links.push({ id: parent.id, rel: 'Child' });
+      changed.add(child);
+    };
+    // x is a child: it is also the child of its parent's spouse (only when that parent has one spouse)
+    parentsOf(x).forEach((par) => {
+      const sp = spousesOf(par);
+      if (sp.length === 1) addChild(x, sp[0]);
+    });
+    // x is a parent: its children are also children of x's spouse (only when x has one spouse)
+    const mySp = spousesOf(x);
+    if (mySp.length === 1) childrenOf(x).forEach((c) => addChild(c, mySp[0]));
+    // x has a spouse: children with only one parent so far get the other partner as their second parent
+    mySp.forEach((sp) => {
+      childrenOf(x).forEach((c) => { if (parentsOf(c).length === 1) addChild(c, sp); });
+      childrenOf(sp).forEach((c) => { if (parentsOf(c).length === 1) addChild(c, x); });
+    });
+    changed.delete(x);
+    return [...changed];
+  }
+
   function applyTreeLabels() {
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
     set('treeBackBtn', T('back'));
@@ -2151,7 +2209,7 @@
     return String(value || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase().replace(/(^|[\s'-])([\p{L}])/gu, (_, sep, ch) => sep + ch.toLocaleUpperCase());
   }
 
-  function buildPersonLinkRows(personBeingEdited = null, onlyPerson = null) {
+  function buildPersonLinkRows(personBeingEdited = null, onlyPerson = null, presetRel = null) {
     pLinks.textContent = '';
     (onlyPerson ? [onlyPerson] : people().filter(p => !personBeingEdited || p.id !== personBeingEdited.id)).forEach((p) => {
       const row = document.createElement('div');
@@ -2171,7 +2229,7 @@
       txt.type = 'text'; txt.className = 'input rel-text';
       txt.placeholder = 'Describe the relation (e.g. Cousin, Uncle, Godparent)'; txt.maxLength = 40;
       const isCustom = oldLink && !RELATIONS.includes(oldLink.rel);
-      sel.value = isCustom ? 'Other' : (oldLink?.rel || 'Friend');
+      sel.value = isCustom ? 'Other' : (oldLink?.rel || presetRel || 'Friend');
       txt.value = isCustom ? oldLink.rel : '';
       txt.classList.toggle('is-hidden', sel.value !== 'Other');
       sel.addEventListener('change', () => txt.classList.toggle('is-hidden', sel.value !== 'Other'));
@@ -2179,7 +2237,7 @@
     });
   }
 
-  function openPersonModal(isMe, personBeingEdited = null, onlyPerson = null) {
+  function openPersonModal(isMe, personBeingEdited = null, onlyPerson = null, presetRel = null) {
     editingPersonId = personBeingEdited ? personBeingEdited.id : null;
     pendingIsMe = personBeingEdited ? !!personBeingEdited.isMe : isMe;
     pendingPhoto = null;
@@ -2192,7 +2250,7 @@
     clanRegistry.forEach((c) => { const o = document.createElement('option'); o.value = c.name; clanList.append(o); });
     pModalTitle.textContent = personBeingEdited ? 'Modify person' : (onlyPerson ? 'Add relative of ' + onlyPerson.first : (isMe ? 'Add yourself (me)' : 'Add family or friend'));
     linkGroup.classList.toggle('is-hidden', pendingIsMe && !personBeingEdited);
-    buildPersonLinkRows(personBeingEdited, onlyPerson);
+    buildPersonLinkRows(personBeingEdited, onlyPerson, presetRel);
     if (personBeingEdited) {
       pFirst.value = personBeingEdited.first;
       pLast.value = personBeingEdited.last;
@@ -2236,6 +2294,7 @@
   document.getElementById('galleryBtn').addEventListener('click', () => { pGalleryInput.value = ''; pGalleryInput.click(); });
   document.getElementById('fileBtn').addEventListener('click', () => { pFileInput.value = ''; pFileInput.click(); });
   document.getElementById('pCancel').addEventListener('click', () => { editingPersonId = null; closePersonModal(); });
+  pLinks.addEventListener('change', () => linkGroup.classList.remove('needs-link'));
   [pFirst, pLast, pClan].forEach(input => input.addEventListener('input', () => { const a = input.selectionStart, b = input.selectionEnd; input.value = titleCaseWords(input.value); try { input.setSelectionRange(a, b); } catch (_) {} }));
   personModal.addEventListener('click', (e) => { if (e.target === personModal) closePersonModal(); });
 
@@ -2257,7 +2316,13 @@
     if (!clan) { pError.textContent = 'Please type a clan name.'; return; }
     if (!gender) { pError.textContent = 'Please choose male or female.'; return; }
     if (!status) { pError.textContent = 'Please choose living or deceased.'; return; }
-    if (!pendingIsMe && people().length && !links.length) { pError.textContent = 'Connect this person to at least one family member or friend.'; return; }
+    const otherPeople = people().some((q) => !editingPersonId || q.id !== editingPersonId);
+    if (otherPeople && !links.length) {
+      pError.textContent = 'Connection is required: tick at least one family member or friend and choose their relation.';
+      linkGroup.classList.add('needs-link');
+      linkGroup.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
 
     const t = treeProject.tree;
     const editing = editingPersonId !== null ? personById(editingPersonId) : null;
@@ -2265,6 +2330,9 @@
       editing.first = first; editing.last = last; editing.clan = clan;
       editing.gender = gender; editing.status = status; editing.dob = dob; editing.links = links;
       editing.localNames = collectLocalNames();
+      const linksBefore = editing.links.length;
+      const autoEdited = autoSpouseChildren(editing);
+      const autoSelf = editing.links.length - linksBefore;
       if (pendingPhoto) editing.photo = pendingPhoto;
       if (pendingPhoto) { editing.img = null; const im = new Image(); im.onload = () => { editing.img = im; }; im.src = pendingPhoto; }
       else if (editing.photo && !editing.img) { const im = new Image(); im.onload = () => { editing.img = im; }; im.src = editing.photo; }
@@ -2273,7 +2341,7 @@
       persistProjects(); histPush();
       selectedId = editing.id;
       closePersonModal(); updateTreeHint(); showPersonCard(editing);
-      toast('Person details updated');
+      toast(autoEdited.length || autoSelf > 0 ? 'Person updated. Spouse and children linked automatically' : 'Person details updated');
       editingPersonId = null;
       return;
     }
@@ -2282,32 +2350,148 @@
     const person = { id:t.nextId++, first, last, clan, gender, status, dob, localNames: collectLocalNames(), photo:pendingPhoto, img:null, x:pos.x, y:pos.y, links, isMe:pendingIsMe };
     if (pendingPhoto) { const im = new Image(); im.onload = () => { person.img = im; }; im.src = pendingPhoto; }
     t.people.push(person);
+    const before = person.links.length;
+    const autoChanged = autoSpouseChildren(person);
+    const autoAdded = (person.links.length - before) + autoChanged.length;
     const reg = registerClan(clan, person, treeProject);
     person.clan = reg.clan.name;
     applyClanLocal(reg.clan);
     recordClanPairs(person, treeProject);
+    autoChanged.forEach((q) => recordClanPairs(q, treeProject));
     persistProjects(); histPush();
     selectedId = person.id; closePersonModal(); updateTreeHint();
+    if (autoAdded > 0) { toast('Spouse and children linked automatically (' + autoAdded + ' thread' + (autoAdded > 1 ? 's' : '') + ' added)'); return; }
     toast(reg.isNew ? 'Clan "' + reg.clan.name + '" added to the galaxy' : (pendingIsMe ? 'You are the first thread of the web' : 'Connected to the web'));
   });
 
+  const INVERSE_REL = { Father: 'Child', Mother: 'Child', Child: 'Parent', Spouse: 'Spouse', Sibling: 'Sibling', Friend: 'Friend', Other: 'Other' };
+  const ordinal = (n) => {
+    const s = ['th', 'st', 'nd', 'rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || 'th');
+  };
+
+  // Everyone related to this person, labelled from this person's point of view
+  function relativesOf(p) {
+    const out = [];
+    people().forEach((q) => {
+      q.links.forEach((l) => {
+        if (l.id === p.id) out.push({ label: TR_REL(l.rel), rel: l.rel, person: q }); // q is l.rel of p
+      });
+    });
+    p.links.forEach((l) => {
+      const q = personById(l.id);
+      if (q) {
+        // A parent is shown as Father or Mother, by their gender
+        const inv = l.rel === 'Child' ? (q.gender === 'female' ? 'Mother' : 'Father') : (INVERSE_REL[l.rel] || l.rel);
+        out.push({ label: TR_REL(inv), rel: inv, person: q }); // p is l.rel of q
+      }
+    });
+    const count = {};
+    out.forEach((r) => { count[r.rel] = (count[r.rel] || 0) + 1; });
+    const seen = {};
+    return out.map((r) => {
+      seen[r.rel] = (seen[r.rel] || 0) + 1;
+      const num = count[r.rel] > 1 ? ordinal(seen[r.rel]) + ' ' : '';
+      return { label: num + r.label, name: personName(r.person), id: r.person.id, rel: r.rel };
+    });
+  }
+
+  // Numbers repeated relations: "1st spouse", "2nd spouse"
+  function numbered(list) {
+    const total = {}, seen = {};
+    list.forEach((r) => { total[r.label] = (total[r.label] || 0) + 1; });
+    return list.map((r) => {
+      seen[r.label] = (seen[r.label] || 0) + 1;
+      return { label: total[r.label] > 1 ? ordinal(seen[r.label]) + ' ' + r.label : r.label, name: r.name };
+    });
+  }
+
+  // Linked by: people who connected to this person, with the relation they chose
+  // Connected to: people this person connected to, with the relation from this person's side
+  function linkGroups(p) {
+    const linkedBy = [], connectedTo = [];
+    people().forEach((q) => {
+      q.links.forEach((l) => {
+        if (l.id === p.id) linkedBy.push({ label: TR_REL(l.rel), name: personName(q) });
+      });
+    });
+    p.links.forEach((l) => {
+      const q = personById(l.id);
+      if (q) connectedTo.push({ label: TR_REL(INVERSE_REL[l.rel] || l.rel), name: personName(q) });
+    });
+    return { linkedBy, connectedTo };
+  }
+
   function showPersonCard(p) {
     const connections = p.links.length + people().filter((q) => q.links.some((l) => l.id === p.id)).length;
-    const rels = p.links
-      .map((l) => { const q = personById(l.id); return q ? TR_REL(l.rel) + ' · ' + personName(q) : null; })
-      .filter(Boolean);
+    const relList = document.getElementById('pcRelList');
+    relList.textContent = '';
+    const addRow = (label, name) => {
+      const row = document.createElement('div');
+      row.className = 'pc-rel-row';
+      const lab = document.createElement('span');
+      lab.className = 'pc-rel-label';
+      lab.textContent = label;
+      const nm = document.createElement('span');
+      nm.className = 'pc-rel-name';
+      nm.textContent = name;
+      row.append(lab, nm);
+      relList.append(row);
+    };
+    const rels = relativesOf(p);
+    if (!rels.length) {
+      const none = document.createElement('p');
+      none.className = 'pc-rel-empty';
+      none.textContent = 'No relatives connected yet.';
+      relList.append(none);
+    }
+    // Father, Mother, Spouse, Child, Sibling, then the rest
+    const rank = { Father: 0, Mother: 1, Spouse: 2, Child: 3, Sibling: 4, Friend: 5, Other: 6, Parent: 0 };
+    rels.slice().sort((a, b) => (rank[a.rel] ?? 6) - (rank[b.rel] ?? 6))
+      .forEach((r) => addRow(r.label, r.name));
     document.getElementById('pcName').textContent = personName(p) + (p.isMe ? ' (' + T('me') + ')' : '');
     document.getElementById('pcInfo').textContent =
       clanName(p.clan) + ' ' + T('clan') + ' · ' + (p.gender === 'male' ? T('male') : T('female')) + ' · ' +
       (p.status === 'deceased' ? T('deceased') : T('living')) + ' · ' +
       (p.dob ? T('born') + ' ' + p.dob + ' · ' : '') +
-      connections + ' ' + (connections === 1 ? T('thread') : T('threads')) +
-      (rels.length ? ' · ' + rels.join(' · ') : '');
+      connections + ' ' + (connections === 1 ? T('thread') : T('threads'));
     personCard.classList.add('show');
   }
 
   document.getElementById('pcClose').addEventListener('click', () => personCard.classList.remove('show'));
-  document.getElementById('pcAddRelative').addEventListener('click', () => { const p = personById(selectedId); if (p) { personCard.classList.remove('show'); openPersonModal(false, null, p); } });
+  // Relation popup: Parents, Spouse, Child, Sibling; each opens the add relative form
+  const relPickModal = document.getElementById('relPickModal');
+  const RELATIVE_CHOICES = [
+    { label: 'Parents', rel: 'Father' },
+    { label: TR_REL('Spouse'), rel: 'Spouse' },
+    { label: TR_REL('Child'), rel: 'Child' },
+    { label: TR_REL('Sibling'), rel: 'Sibling' },
+    { label: TR_REL('Friend'), rel: 'Friend' }
+  ];
+  function openRelPick(p) {
+    const list = document.getElementById('relPickList');
+    list.textContent = '';
+    RELATIVE_CHOICES.forEach((c) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'white-clay';
+      b.style.width = '100%';
+      b.textContent = c.label;
+      b.addEventListener('click', () => {
+        relPickModal.classList.add('hidden');
+        personCard.classList.remove('show');
+        openPersonModal(false, null, p, c.rel);
+      });
+      list.append(b);
+    });
+    relPickModal.classList.remove('hidden');
+  }
+  document.getElementById('relPickClose').addEventListener('click', () => relPickModal.classList.add('hidden'));
+  relPickModal.addEventListener('click', (e) => { if (e.target === relPickModal) relPickModal.classList.add('hidden'); });
+  document.getElementById('pcAddRelative').addEventListener('click', () => {
+    const p = personById(selectedId);
+    if (p) openRelPick(p);
+  });
   document.getElementById('pcModify').addEventListener('click', () => { const p = personById(selectedId); if (p) { personCard.classList.remove('show'); openPersonModal(false, p); } });
   document.getElementById('addPersonBtn').addEventListener('click', () => openPersonModal(people().length === 0));
   document.getElementById('treeBackBtn').addEventListener('click', closeTree);
@@ -2402,22 +2586,62 @@
     if (e.key === 'Escape') closePersonModal();
   });
 
+  // Each generation has its own colour: Gen 1 is the oldest generation in the web
+  const GEN_COLORS = ['#ffc233', '#ff7043', '#a77bff', '#00e5ff', '#e040fb', '#c6e63a', '#ff5a8a', '#90a4ae'];
+  const genColor = (g) => GEN_COLORS[((g % GEN_COLORS.length) + GEN_COLORS.length) % GEN_COLORS.length];
+  let genNow = new Map();
+  let genLegendSig = '';
+  function refreshGenerations() {
+    genNow = treeProject ? generationMap(treeProject) : new Map();
+    const present = [...new Set(genNow.values())].sort((a, b) => a - b);
+    const sig = present.join(',');
+    if (sig === genLegendSig) return;
+    genLegendSig = sig;
+    const box = document.getElementById('genLegend');
+    box.textContent = '';
+    if (present.length < 2) return;      // one generation only: nothing to tell apart
+    present.forEach((g) => {
+      const item = document.createElement('span');
+      const dot = document.createElement('i');
+      dot.style.color = genColor(g);
+      item.append(dot, document.createTextNode('Gen ' + (g + 1)));
+      box.append(item);
+    });
+  }
+
   // Draw the web thread
   function drawPerson(p, t, PX) {
     const R = NODE_R;
     const sel = p.id === selectedId;
+    const gc = genColor(genNow.get(p.id) || 0);
     tctx.globalAlpha = p.status === 'deceased' ? 0.5 : 1;
 
-    // Ring: green for me, bright when selected
-    tctx.strokeStyle = p.isMe ? 'rgba(60,255,122,0.95)' : sel ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.45)';
-    tctx.lineWidth = (p.isMe ? 3 : 1.5) * PX;
+    // Ring in the colour of the person's generation
+    tctx.strokeStyle = gc;
+    tctx.lineWidth = 3.2 * PX;
     tctx.beginPath();
     tctx.arc(p.x, p.y, R + 5 * PX, 0, Math.PI * 2);
     tctx.stroke();
+    // Me: green outer ring. Selected: white outer ring.
+    if (p.isMe) {
+      tctx.strokeStyle = 'rgba(60,255,122,0.95)';
+      tctx.lineWidth = 2.4 * PX;
+      tctx.beginPath(); tctx.arc(p.x, p.y, R + 11 * PX, 0, Math.PI * 2); tctx.stroke();
+    }
+    if (sel) {
+      tctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      tctx.lineWidth = 1.6 * PX;
+      tctx.beginPath(); tctx.arc(p.x, p.y, R + (p.isMe ? 17 : 11) * PX, 0, Math.PI * 2); tctx.stroke();
+    }
 
-    // Photo or initials
+    // Photo or initials: circle tinted with the generation colour
     tctx.fillStyle = '#070808';
     tctx.beginPath(); tctx.arc(p.x, p.y, R, 0, Math.PI * 2); tctx.fill();
+    tctx.save();
+    tctx.globalAlpha *= 0.28;
+    tctx.fillStyle = gc;
+    tctx.beginPath(); tctx.arc(p.x, p.y, R, 0, Math.PI * 2); tctx.fill();
+    tctx.restore();
     if (p.img) {
       tctx.save();
       tctx.beginPath(); tctx.arc(p.x, p.y, R, 0, Math.PI * 2); tctx.clip();
@@ -2469,7 +2693,7 @@
       tctx.fillStyle = '#3cff7a';
       tctx.font = '700 11px "Sora", system-ui, sans-serif';
       tctx.textBaseline = 'bottom';
-      tctx.fillText(T('me').toUpperCase(), p.x, p.y - R - 10);
+      tctx.fillText(T('me').toUpperCase(), p.x, p.y - R - (sel ? 22 : 16));
     }
     tctx.globalAlpha = 1;
   }
@@ -2536,6 +2760,7 @@
       }
     }
 
+    refreshGenerations();
     for (const p of list) drawPerson(p, t, PX);
   }
 
@@ -2884,7 +3109,20 @@
   const chosenName = document.getElementById('chosenName');
   let pendingImport = null;
 
-  function showSettings() {
+  // null = all projects (gear icon); a project object = that project only (three-dot menu)
+  let settingsProject = null;
+
+  function showSettings(project) {
+    settingsProject = project && project.title !== undefined ? project : null;
+    const one = !!settingsProject;
+    document.getElementById('settingsTitle').textContent = one ? 'Project settings' : 'Settings';
+    document.getElementById('exportTitle').textContent = one ? 'Export ' + settingsProject.title : 'Export data';
+    document.getElementById('exportDesc').textContent = one
+      ? 'Saves only this project, with its clan and family members and their relations, as its own CSV or JSON file on this device. The file name has the project name and the date.'
+      : 'Saves every project, with its clan and family members and their relations, as a file on this device. The file name includes the date.';
+    document.getElementById('importCard').classList.toggle('is-hidden', one);
+    document.getElementById('exportBox').classList.add('is-hidden');
+    lastExport = '';
     projectScreen.classList.add('hidden');
     settingsScreen.classList.remove('hidden');
     settingsScreen.scrollTop = 0;
@@ -2900,7 +3138,8 @@
 
   // The list of projects, with their people, in a plain form
   function exportList() {
-    return projects.map((pr) => ({
+    const src = settingsProject && projects.includes(settingsProject) ? [settingsProject] : projects;
+    return src.map((pr) => ({
       title: pr.title,
       description: pr.desc || '',
       people: (pr.tree ? pr.tree.people : []).map((p) => ({
@@ -2980,7 +3219,11 @@
       ? buildCSV(list)
       : JSON.stringify({ format: 'abd-family-web', version: 1, exported: new Date().toISOString(), projects: list }, null, 2);
     lastExport = data;
-    await saveFile('ABD-family-web-' + stamp + '.' + kind, data, kind === 'csv' ? 'text/csv;charset=utf-8' : 'application/json');
+    const slug = settingsProject && settingsProject.title
+      ? settingsProject.title.trim().replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'project'
+      : '';
+    const name = slug ? 'ABD-' + slug + '-' + stamp : 'ABD-family-web-' + stamp;
+    await saveFile(name + '.' + kind, data, kind === 'csv' ? 'text/csv;charset=utf-8' : 'application/json');
   }
 
   // Shared check for one person from a file
@@ -3094,6 +3337,40 @@
   }
 
   // Adds the people to the project named in the file (creating the project if needed)
+  // Lays a project's people out in clean rows: oldest generation at the top,
+  // relatives next to each other inside each row, and nobody on top of anyone else
+  function arrangeProject(pr) {
+    const list = pr.tree ? pr.tree.people : [];
+    if (!list.length) return;
+    const gen = generationMap(pr);
+    const byId = new Map(list.map((q) => [q.id, q]));
+    const order = new Map();
+    let idx = 0;
+    list.slice().sort((a, b) => (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0)).forEach((start) => {
+      if (order.has(start.id)) return;
+      order.set(start.id, idx++);
+      const queue = [start.id];
+      while (queue.length) {
+        const cur = byId.get(queue.shift());
+        cur.links.forEach((l) => {
+          if (byId.has(l.id) && !order.has(l.id)) { order.set(l.id, idx++); queue.push(l.id); }
+        });
+      }
+    });
+    const rows = new Map();
+    list.forEach((q) => {
+      const g = gen.get(q.id) || 0;
+      if (!rows.has(g)) rows.set(g, []);
+      rows.get(g).push(q);
+    });
+    const GAP_X = 210, GAP_Y = 220;
+    [...rows.keys()].sort((a, b) => a - b).forEach((g) => {
+      const row = rows.get(g).sort((a, b) => order.get(a.id) - order.get(b.id));
+      const width = (row.length - 1) * GAP_X;
+      row.forEach((q, i) => { q.x = -width / 2 + i * GAP_X; q.y = g * GAP_Y; });
+    });
+  }
+
   function importProjects(list) {
     let peopleCount = 0;
     const touched = new Set();
@@ -3160,6 +3437,7 @@
         peopleCount++;
       });
       created.forEach((person) => recordClanPairs(person, pr));
+      arrangeProject(pr);
       touched.add(pr);
     }
     renderProjects();
@@ -3186,7 +3464,7 @@
     box.focus();
     box.select();
   });
-  document.getElementById('settingsBtn').addEventListener('click', showSettings);
+  document.getElementById('settingsBtn').addEventListener('click', () => showSettings(null));
   document.getElementById('settingsBackBtn').addEventListener('click', backFromSettings);
   document.getElementById('exportCsvBtn').addEventListener('click', () => exportData('csv'));
   document.getElementById('exportJsonBtn').addEventListener('click', () => exportData('json'));
@@ -3224,6 +3502,471 @@
   langModal.addEventListener('click', (e) => { if (e.target === langModal) langModal.classList.add('hidden'); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') langModal.classList.add('hidden'); });
 
+  /* ----- Delete project: confirm, then 10 seconds to undo ----- */
+  function safePersist() {
+    try { persistProjects(); } catch (err) { console.error('Could not save projects', err); }
+  }
+  const pendingBar = document.getElementById('pendingBar');
+  const pendingText = document.getElementById('pendingText');
+  let pending = null; // { project, index, left, timer }
+
+  function rebuildPairs() {
+    clanPairs.clear();
+    projects.forEach((q) => { if (q.tree) q.tree.people.forEach((person) => recordClanPairs(person, q)); });
+  }
+
+  function setPendingText() {
+    pendingText.textContent = '"' + pending.project.title + '" will be deleted in ' + pending.left + 's';
+  }
+
+  function finishPending(message) {
+    if (!pending) return;
+    clearInterval(pending.timer);
+    pending = null;
+    pendingBar.classList.add('is-hidden');
+    safePersist();
+    renderProjects();
+    if (message) toast(message);
+  }
+
+  function startPendingDelete(p) {
+    finishPending();
+    const index = projects.indexOf(p);
+    if (index < 0) return;
+    projects.splice(index, 1);
+    rebuildClanRegistry();
+    rebuildPairs();
+    renderProjects();
+    pending = { project: p, index, left: 10, timer: null };
+    pending.timer = setInterval(() => {
+      if (!pending) return;
+      pending.left--;
+      if (pending.left <= 0) finishPending('Project deleted');
+      else setPendingText();
+    }, 1000);
+    setPendingText();
+    pendingBar.classList.remove('is-hidden');
+  }
+
+  document.getElementById('pendingUndo').addEventListener('click', () => {
+    if (!pending) return;
+    const pd = pending;
+    clearInterval(pd.timer);
+    pending = null;
+    pendingBar.classList.add('is-hidden');
+    projects.splice(Math.min(pd.index, projects.length), 0, pd.project);
+    rebuildClanRegistry();
+    rebuildPairs();
+    renderProjects();
+    safePersist();
+    toast('Project restored');
+  });
+  document.getElementById('pendingNow').addEventListener('click', () => finishPending('Project deleted'));
+
+  /* ----- Each project's own galaxy (clan view), with zoom and threads ----- */
+  const pgScreen = document.getElementById('pgScreen');
+  const pgCanvas = document.getElementById('pgCanvas');
+  const pgCtx = pgCanvas.getContext('2d');
+  const PG_COLORS = ['#cfe3ff', '#ffe14d', '#ffb347', '#9be7ff', '#ff6b4a', '#b388ff', '#ffd166', '#3cff7a', '#ff7eb6'];
+  const PG_PALETTES = [
+    { pts: ['#8fe6ff', '#4fb8ff', '#e6f7ff'], haze: ['40,140,255', '60,190,255', '20,100,220'], core: 'rgba(230,248,255,0.7)' },
+    { pts: ['#d6b8ff', '#8fb3ff', '#ffe1f7'], haze: ['140,90,255', '200,120,255', '90,80,220'], core: 'rgba(250,235,255,0.7)' },
+    { pts: ['#fff0b3', '#9fe8ff', '#fff9e6'], haze: ['255,190,90', '120,200,255', '255,140,60'], core: 'rgba(255,248,220,0.7)' },
+    { pts: ['#9dffe6', '#4fd8ff', '#e8fffa'], haze: ['60,230,190', '40,160,255', '30,200,170'], core: 'rgba(230,255,250,0.7)' }
+  ];
+  const PG_ZMIN = 0.3, PG_ZMAX = 4;
+  let pg = null;
+  let pgFrom = 'projects';
+
+  function pgHash(s) {
+    let h = 2166136261;
+    for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+    return h >>> 0;
+  }
+  function pgRandom(seed) {
+    return function () {
+      seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+      let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function pgResize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    pgCanvas.width = window.innerWidth * dpr;
+    pgCanvas.height = window.innerHeight * dpr;
+    pgCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function pgZoomAt(px, py, factor) {
+    const W = window.innerWidth, H = window.innerHeight;
+    const oldZ = pg.zoom;
+    const wx = (px - (W / 2 + pg.panX)) / oldZ;
+    const wy = (py - (H / 2 + pg.panY)) / oldZ;
+    pg.zoom = Math.min(PG_ZMAX, Math.max(PG_ZMIN, oldZ * factor));
+    pg.panX = px - W / 2 - wx * pg.zoom;
+    pg.panY = py - H / 2 - wy * pg.zoom;
+  }
+
+  // Opens the members of one clan in this project, oldest generation first
+  function openProjectClanMembers(pr, name) {
+    const items = (pr.tree ? pr.tree.people : [])
+      .filter((q) => q.clan === name)
+      .map((person) => ({ person, pr, project: pr.title }));
+    const sorted = sortByGeneration(items);
+    gKind.textContent = 'Clan in ' + pr.title;
+    gTitle.textContent = name + ' clan';
+    gSub.textContent = sorted.length + (sorted.length === 1 ? ' member' : ' members') + ' · generation order';
+    gList.textContent = '';
+    if (!sorted.length) {
+      const em = document.createElement('p');
+      em.className = 'search-empty';
+      em.textContent = 'No members yet.';
+      gList.append(em);
+    }
+    sorted.forEach((it) => gList.append(memberRow(it.person, it.pr, it.project + ' · Generation ' + (it.gen + 1))));
+    groupModal.classList.remove('hidden');
+  }
+
+  function openProjectGalaxy(pr) {
+    const rnd = pgRandom(pgHash(pr.title + '|' + (pr.shareId || '')));
+    const gauss = () => (rnd() + rnd() + rnd() - 1.5) / 1.5;
+    const names = [];
+    (pr.tree ? pr.tree.people : []).forEach((q) => {
+      let n = names.find((x) => x.name === q.clan);
+      if (!n) { n = { name: q.clan, key: String(q.clan).toLowerCase(), count: 0 }; names.push(n); }
+      n.count++;
+    });
+    names.forEach((n, k) => {
+      n.color = PG_COLORS[pgHash(n.name) % PG_COLORS.length];
+      n.angle = k * 2.39996 + rnd() * 0.6;
+      n.r = 0.22 + 0.62 * Math.sqrt((k + 1) / (names.length + 1)) + rnd() * 0.05;
+    });
+    // Each project gets its own real galaxy type: spiral, barred spiral, elliptical or irregular
+    const kinds = ['spiral', 'spiral', 'barred', 'elliptical', 'irregular'];
+    const kind = kinds[Math.floor(rnd() * kinds.length)];
+    const palette = PG_PALETTES[Math.floor(rnd() * PG_PALETTES.length)];
+    const gal = { kind, palette, rot: rnd() * Math.PI * 2, tilt: 0.5 + rnd() * 0.4 };
+    const pick = () => palette.pts[Math.floor(rnd() * palette.pts.length)];
+    const arms = [];
+    const addPoint = (x, y, s, b) => arms.push({ x, y, s, b, col: pick(), ph: rnd() * 6.28 });
+    if (kind === 'spiral' || kind === 'barred') {
+      const n = kind === 'barred' ? 2 : 2 + Math.floor(rnd() * 3);
+      const k = 2.5 + rnd() * 2.2;
+      for (let i = 0; i < 1500; i++) {
+        const arm = i % n;
+        const u = Math.pow(rnd(), 0.7);
+        const th = arm * (Math.PI * 2 / n) + k * Math.log(1 + u * 5) + gauss() * 0.16 * (1 - u * 0.5);
+        const r = (kind === 'barred' ? 0.42 : 0) + u * (kind === 'barred' ? 0.55 : 0.95);
+        addPoint(Math.cos(th) * r, Math.sin(th) * r, 0.4 + rnd() * 1.1, 0.3 + rnd() * 0.6 * (1 - u * 0.6));
+      }
+      if (kind === 'barred') {
+        for (let i = 0; i < 220; i++) addPoint((rnd() * 2 - 1) * 0.42, gauss() * 0.05, 0.5 + rnd() * 0.9, 0.5 + rnd() * 0.4);
+      }
+      for (let i = 0; i < 260; i++) {
+        const r = Math.pow(rnd(), 1.8) * 0.28, th = rnd() * Math.PI * 2;
+        addPoint(Math.cos(th) * r, Math.sin(th) * r, 0.6 + rnd() * 1.2, 0.6 + rnd() * 0.4);
+      }
+      for (let i = 0; i < 300; i++) {
+        const r = Math.sqrt(rnd()) * 0.95, th = rnd() * Math.PI * 2;
+        addPoint(Math.cos(th) * r, Math.sin(th) * r, 0.3 + rnd() * 0.6, 0.12 + rnd() * 0.15);
+      }
+    } else if (kind === 'elliptical') {
+      for (let i = 0; i < 900; i++) {
+        const x = gauss() * 0.42, y = gauss() * 0.42;
+        addPoint(x, y, 0.4 + rnd() * 1.1, Math.max(0.12, 0.9 - Math.hypot(x, y) * 1.4));
+      }
+    } else {
+      const clumps = [];
+      for (let q = 0; q < 6; q++) clumps.push({ x: (rnd() - 0.5) * 1.3, y: (rnd() - 0.5) * 1.3 });
+      for (let i = 0; i < 900; i++) {
+        const cl = clumps[i % clumps.length];
+        addPoint(cl.x + gauss() * 0.14, cl.y + gauss() * 0.14, 0.4 + rnd() * 1.0, 0.35 + rnd() * 0.5);
+      }
+    }
+    // Background stars that twinkle
+    const stars = [];
+    for (let i = 0; i < 380; i++) {
+      stars.push({ x: rnd() - 0.5, y: rnd() - 0.5, s: 0.4 + rnd() * 1.1, a: 0.25 + rnd() * 0.7, f: 0.0015 + rnd() * 0.004, ph: rnd() * 6.28 });
+    }
+    // Soft blue nebula haze
+    const haze = [];
+    const hazeCols = gal.palette.haze;
+    for (let i = 0; i < 6; i++) {
+      haze.push({ x: rnd() * 1.2 - 0.6, y: rnd() - 0.5, r: 0.5 + rnd() * 0.6, a: 0.07 + rnd() * 0.07, col: hazeCols[i % 3] });
+    }
+    pg = { pr, names, arms, gal, stars, haze, zoom: 1, panX: 0, panY: 0, drag: null, moved: false, hits: [], touches: new Map(), pinch: 0 };
+    document.getElementById('pgTitle').textContent = pr.title;
+    document.getElementById('pgHint').textContent = names.length
+      ? 'Tap a clan crest to see its members in generation order. Scroll or pinch to zoom.'
+      : 'No clans in this project yet.';
+    projectScreen.classList.add('hidden');
+    pgScreen.classList.remove('hidden');
+    pgResize();
+  }
+
+  function drawProjectGalaxy(t) {
+    if (!pg || pgScreen.classList.contains('hidden')) return;
+    const W = window.innerWidth, H = window.innerHeight, c = pgCtx;
+    const cx = W / 2 + pg.panX, cy = H / 2 + pg.panY;
+    const R = Math.min(W, H) * 0.42 * pg.zoom;
+    const rot = t * 0.000015;
+
+    // Deep blue-black sky
+    c.globalCompositeOperation = 'source-over';
+    c.fillStyle = '#02040a';
+    c.fillRect(0, 0, W, H);
+
+    c.globalCompositeOperation = 'lighter';
+    // Nebula haze
+    pg.haze.forEach((hz) => {
+      const x = cx + hz.x * R, y = cy + hz.y * R * 0.6, rr = hz.r * R;
+      const g = c.createRadialGradient(x, y, 0, x, y, rr);
+      g.addColorStop(0, 'rgba(' + hz.col + ',' + hz.a + ')');
+      g.addColorStop(1, 'rgba(' + hz.col + ',0)');
+      c.fillStyle = g;
+      c.fillRect(x - rr, y - rr, rr * 2, rr * 2);
+    });
+
+    // Background stars, twinkling
+    pg.stars.forEach((st) => {
+      const tw = 0.55 + 0.45 * Math.sin(t * st.f + st.ph);
+      c.fillStyle = '#cfeaff';
+      c.globalAlpha = st.a * tw;
+      c.beginPath();
+      c.arc((st.x + 0.5) * W, (st.y + 0.5) * H, st.s, 0, Math.PI * 2);
+      c.fill();
+    });
+
+    // Glowing spiral arms
+    const gca = Math.cos(pg.gal.rot + rot), gsa = Math.sin(pg.gal.rot + rot);
+    pg.arms.forEach((d) => {
+      const Y = d.y * pg.gal.tilt;
+      const x = cx + (d.x * gca - Y * gsa) * R * 1.7;
+      const y = cy + (d.x * gsa + Y * gca) * R * 1.7;
+      const tw = 0.7 + 0.3 * Math.sin(t * 0.002 + d.ph);
+      c.fillStyle = d.col;
+      c.globalAlpha = d.b * tw;
+      c.beginPath(); c.arc(x, y, d.s, 0, Math.PI * 2); c.fill();
+    });
+
+    // Bright blue-white core
+    const core = c.createRadialGradient(cx, cy, 0, cx, cy, R * 0.45);
+    core.addColorStop(0, pg.gal.palette.core);
+    core.addColorStop(0.3, 'rgba(90,200,255,0.3)');
+    core.addColorStop(1, 'rgba(0,0,0,0)');
+    c.globalAlpha = 1;
+    c.fillStyle = core;
+    c.beginPath(); c.arc(cx, cy, R * 0.45, 0, Math.PI * 2); c.fill();
+    c.globalCompositeOperation = 'source-over';
+
+    // Clan positions on the screen
+    pg.names.forEach((n) => {
+      const a = n.angle + rot;
+      n.x = cx + Math.cos(a) * n.r * R;
+      n.y = cy + Math.sin(a) * n.r * R * 0.6;
+    });
+
+    // Neon threads: from the centre to each clan, and between related clans
+    c.save();
+    c.shadowColor = '#4fd2ff';
+    c.shadowBlur = 10;
+    c.strokeStyle = 'rgba(120,220,255,0.55)';
+    c.lineWidth = 1.2;
+    c.beginPath();
+    pg.names.forEach((n) => { c.moveTo(cx, cy); c.lineTo(n.x, n.y); });
+    c.stroke();
+    c.beginPath();
+    clanPairs.forEach((pair) => {
+      const A = pg.names.find((n) => n.key === pair.a), B = pg.names.find((n) => n.key === pair.b);
+      if (!A || !B) return;
+      c.moveTo(A.x, A.y);
+      c.lineTo(B.x, B.y);
+    });
+    c.stroke();
+    c.restore();
+
+    // Clan crests with a neon halo
+    pg.hits = [];
+    const k = Math.min(1.3, Math.max(0.8, pg.zoom));
+    pg.names.forEach((n, i) => {
+      const x = n.x, y = n.y;
+      const pulse = 0.5 + 0.5 * Math.sin(t * 0.002 + i);
+      c.save();
+      c.shadowColor = '#7fe0ff';
+      c.shadowBlur = 16 + pulse * 8;
+      c.strokeStyle = '#7fe0ff';
+      c.lineWidth = 1.5;
+      c.globalAlpha = 0.35 + pulse * 0.25;
+      c.beginPath(); c.arc(x, y, 22 * k, 0, Math.PI * 2); c.stroke();
+      c.globalAlpha = 1;
+      c.fillStyle = '#000';
+      c.beginPath(); c.arc(x, y, 14 * k, 0, Math.PI * 2); c.fill();
+      c.lineWidth = 2.5;
+      c.strokeStyle = n.color;
+      c.stroke();
+      c.restore();
+      c.fillStyle = n.color;
+      c.font = '700 ' + Math.round(13 * k) + 'px "Sora", system-ui, sans-serif';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText((n.name || '?').charAt(0).toUpperCase(), x, y + 1);
+      c.fillStyle = '#e6f7ff';
+      c.font = '600 ' + Math.round(12 * k) + 'px "Sora", system-ui, sans-serif';
+      c.textBaseline = 'top';
+      c.fillText(n.name + ' clan', x, y + 26 * k);
+      c.fillStyle = '#8fb8d0';
+      c.font = Math.round(11 * k) + 'px "Sora", system-ui, sans-serif';
+      c.fillText(n.count + (n.count === 1 ? ' member' : ' members'), x, y + 42 * k);
+      pg.hits.push({ name: n.name, x, y });
+    });
+    c.globalAlpha = 1;
+  }
+
+  function pgLoop(t) {
+    drawProjectGalaxy(t);
+    requestAnimationFrame(pgLoop);
+  }
+  requestAnimationFrame(pgLoop);
+
+  pgCanvas.addEventListener('wheel', (e) => {
+    if (!pg) return;
+    e.preventDefault();
+    pgZoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
+  }, { passive: false });
+
+  pgCanvas.addEventListener('pointerdown', (e) => {
+    if (!pg) return;
+    pg.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pg.touches.size === 1) {
+      pg.drag = { x: e.clientX, y: e.clientY, panX: pg.panX, panY: pg.panY };
+      pg.moved = false;
+    } else if (pg.touches.size === 2) {
+      const [a, b] = [...pg.touches.values()];
+      pg.pinch = Math.hypot(a.x - b.x, a.y - b.y);
+      pg.drag = null;
+      pg.moved = true;
+    }
+  });
+
+  window.addEventListener('pointermove', (e) => {
+    if (!pg || !pg.touches.has(e.pointerId)) return;
+    pg.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pg.touches.size === 2) {
+      const [a, b] = [...pg.touches.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      if (pg.pinch > 0) pgZoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pg.pinch);
+      pg.pinch = d;
+      return;
+    }
+    if (pg.drag) {
+      const dx = e.clientX - pg.drag.x, dy = e.clientY - pg.drag.y;
+      if (Math.hypot(dx, dy) > 6) pg.moved = true;
+      pg.panX = pg.drag.panX + dx;
+      pg.panY = pg.drag.panY + dy;
+    }
+  });
+
+  function pgEndPointer(e) {
+    if (!pg || !pg.touches.has(e.pointerId)) return;
+    const wasTap = pg.touches.size === 1 && !pg.moved && e.type === 'pointerup';
+    pg.touches.delete(e.pointerId);
+    if (pg.touches.size < 2) pg.pinch = 0;
+    if (pg.touches.size === 0) pg.drag = null;
+    if (!wasTap) return;
+    let best = null, bestD = 28;
+    pg.hits.forEach((h) => {
+      const d = Math.hypot(h.x - e.clientX, h.y - e.clientY);
+      if (d < bestD) { bestD = d; best = h; }
+    });
+    if (best) openProjectClanMembers(pg.pr, best.name);
+  }
+  window.addEventListener('pointerup', pgEndPointer);
+  window.addEventListener('pointercancel', pgEndPointer);
+  window.addEventListener('resize', () => { if (!pgScreen.classList.contains('hidden')) pgResize(); });
+
+  document.getElementById('pgZoomIn').addEventListener('click', () => { if (pg) pgZoomAt(window.innerWidth / 2, window.innerHeight / 2, 1.25); });
+  document.getElementById('pgZoomOut').addEventListener('click', () => { if (pg) pgZoomAt(window.innerWidth / 2, window.innerHeight / 2, 0.8); });
+  document.getElementById('pgZoomReset').addEventListener('click', () => { if (pg) { pg.zoom = 1; pg.panX = 0; pg.panY = 0; } });
+
+  document.getElementById('pgBackBtn').addEventListener('click', () => {
+    pgScreen.classList.add('hidden');
+    if (pgFrom === 'tree' && treeProject) {
+      treeScreen.classList.remove('hidden');
+    } else {
+      projectScreen.classList.remove('hidden');
+      renderProjects();
+    }
+  });
+  document.getElementById('treeClanBtn').addEventListener('click', () => {
+    if (!treeProject) return;
+    pgFrom = 'tree';
+    treeScreen.classList.add('hidden');
+    openProjectGalaxy(treeProject);
+  });
+
+  /* ----- Phone back button and swipe from the left edge ----- */
+  const LAYER_MODALS = [
+    ['confirmModal', 'confirmNo'], ['relPickModal', 'relPickClose'], ['langModal', 'langClose'],
+    ['groupModal', 'gClose'], ['personModal', 'pCancel'], ['renameModal', 'renCancel'], ['projectModal', 'cancelProjectBtn']
+  ];
+  const LAYER_SCREENS = [
+    ['pgScreen', 'pgBackBtn'], ['treeScreen', 'treeBackBtn'], ['aboutScreen', 'aboutBackBtn'],
+    ['settingsScreen', 'settingsBackBtn'], ['sharedScreen', 'sharedBackBtn'], ['projectScreen', 'backBtn']
+  ];
+  const isOpen = (id) => { const el = document.getElementById(id); return !!el && !el.classList.contains('hidden'); };
+  const cardOpen = () => { const el = document.getElementById('personCard'); return !!el && el.classList.contains('show'); };
+
+  // How many layers are open on top of the home page
+  function layerCount() {
+    return LAYER_MODALS.filter(([id]) => isOpen(id)).length + (cardOpen() ? 1 : 0) + LAYER_SCREENS.filter(([id]) => isOpen(id)).length;
+  }
+
+  // Closes the top-most open layer, the same way its Back button does. Returns false on the home page.
+  function backAction() {
+    for (const [id, close] of LAYER_MODALS) {
+      if (isOpen(id)) { document.getElementById(close).click(); return true; }
+    }
+    if (cardOpen()) { document.getElementById('personCard').classList.remove('show'); return true; }
+    for (const [id, back] of LAYER_SCREENS) {
+      if (isOpen(id)) { document.getElementById(back).click(); return true; }
+    }
+    return false;
+  }
+
+  // Keeps the browser history in step with the open layers, so the phone's back button works
+  let prevLayers = 0, ignorePop = 0;
+  function syncHistory() {
+    const c = layerCount();
+    if (c > prevLayers) {
+      for (let i = prevLayers; i < c; i++) history.pushState({ layer: true }, '');
+    } else if (c < prevLayers) {
+      for (let i = c; i < prevLayers; i++) { ignorePop++; history.back(); }
+    }
+    prevLayers = c;
+  }
+  prevLayers = layerCount();
+  history.pushState({ guard: true }, '');
+  new MutationObserver(syncHistory).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'] });
+
+  window.addEventListener('popstate', () => {
+    if (ignorePop > 0) { ignorePop--; return; }
+    if (!backAction()) history.pushState({ guard: true }, ''); // home page: stay in the app
+    prevLayers = layerCount();
+  });
+
+  // Swipe right from the left edge of the screen to go back
+  let edgeStart = null;
+  window.addEventListener('pointerdown', (e) => {
+    edgeStart = e.pointerType === 'touch' && e.clientX < 28 ? { x: e.clientX, y: e.clientY } : null;
+  });
+  window.addEventListener('pointerup', (e) => {
+    if (!edgeStart) return;
+    const dx = e.clientX - edgeStart.x, dy = Math.abs(e.clientY - edgeStart.y);
+    edgeStart = null;
+    if (dx > 90 && dy < 70) backAction();
+  });
+
   /* ----- Delete person (with confirmation) ----- */
   const confirmModal = document.getElementById('confirmModal');
   let confirmAction = null;
@@ -3244,7 +3987,12 @@
   document.getElementById('confirmYes').addEventListener('click', () => {
     const fn = confirmAction;
     closeConfirm();
-    if (fn) fn();
+    try {
+      if (fn) fn();
+    } catch (err) {
+      console.error(err);
+      toast('Delete failed: ' + (err && err.message ? err.message : 'unknown error'));
+    }
   });
   document.getElementById('confirmNo').addEventListener('click', closeConfirm);
   confirmModal.addEventListener('click', (e) => { if (e.target === confirmModal) closeConfirm(); });
@@ -3662,7 +4410,6 @@
 
   openSharedFromHash();
 })();
-
 
 (function introGlobe() {
     const intro = document.getElementById('introScreen');
