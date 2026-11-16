@@ -1,4 +1,4 @@
-:root {
+  :root {
     --ink: #f2f4f3;
     --muted: #8b918e;
     --green: #3cff7a;
@@ -550,16 +550,6 @@
   }
   #treeScreen .tree-head .page-actions .icon-btn { width: 42px; height: 42px; min-width: 42px; }
   #treeScreen .tree-head .page-actions .white-clay { padding: 12px 14px; font-size: 0.85rem; white-space: nowrap; flex: none; }
-  /* Phone: About us, search and Projects on one row under the title */
-  @media (max-width: 520px) {
-    #homeScreen header .header-row { flex-wrap: nowrap; gap: 8px; align-items: center; }
-    #homeScreen header .header-row .icon-stack { flex-direction: row; gap: 6px; flex: none; }
-    #homeScreen header .header-row .icon-btn { width: 40px; height: 40px; min-width: 40px; }
-    #homeScreen header .header-row .search-wrap { flex: 1 1 0; min-width: 0; max-width: none; }
-    #homeScreen header .header-row .search-input { padding: 10px 12px; font-size: 0.85rem; }
-    #homeScreen header .header-row .actions { flex: none; }
-    #homeScreen header .header-row .white-clay { padding: 10px 12px; font-size: 0.82rem; white-space: nowrap; }
-  }
   .sr-only-file { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
   .rel-text { flex-basis: 100%; padding: 10px 12px; font-size: 0.85rem; }
   .link-row {
@@ -804,9 +794,6 @@
   body.focus-mode #treeScreen .tree-head,
   body.focus-mode #treeScreen .tree-hint,
   body.focus-mode #treeScreen .person-card { display: none !important; }
-  .gen-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 8px; max-width: 60vw; pointer-events: none; }
-  .gen-legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 0.72rem; color: #b9bdbc; white-space: nowrap; }
-  .gen-legend i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px currentColor; background: currentColor; }
   .tree-hint { padding: 0 76px; }
   .person-card { bottom: 78px; }
 

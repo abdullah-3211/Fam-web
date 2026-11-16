@@ -39,6 +39,7 @@
     </div>
       <nav class="actions" aria-label="Main">
         <button class="white-clay" type="button" id="addBtn">Projects</button>
+        <button class="icon-btn" type="button" id="profileBtn" aria-label="Profile" title="Profile"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.6"/><path d="M4.8 20c.7-3.6 3.7-5.6 7.2-5.6s6.5 2 7.2 5.6"/></svg></button>
       </nav>
     </div>
   </header>
@@ -105,12 +106,12 @@
     <div>
       <p class="page-brand">ΔBD <span class="web">FAMILY WEB</span></p>
       <h1 class="page-title" id="treeTitle">Family tree</h1>
-      <div class="gen-legend" id="genLegend" aria-label="Generation colours"></div>
     </div>
     <div class="page-actions">
       <button class="icon-btn" type="button" id="undoBtn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
       <button class="icon-btn" type="button" id="redoBtn" aria-label="Redo" title="Redo (Ctrl+Y)" disabled><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
       <button class="icon-btn" type="button" id="langBtn" aria-label="Language" title="Language"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg></button>
+      <button class="icon-btn" type="button" id="arrangeBtn" aria-label="Arrange by generation" title="Arrange by generation"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="5" rx="1.2"/><rect x="3" y="16" width="6" height="5" rx="1.2"/><rect x="15" y="16" width="6" height="5" rx="1.2"/><path d="M12 8v4M6 16v-4h12v4"/></svg></button>
       <button class="white-clay dark" type="button" id="treeBackBtn">Back</button>
       <button class="white-clay" type="button" id="addPersonBtn">+ Add person</button>
     </div>
@@ -364,47 +365,36 @@
   <div class="page-body about-body">
     <section class="setting-card">
       <h2>What is ΔBD Family Web?</h2>
-      <p>ΔBD Family Web lets you build your family tree as a web. Every person is a point, every connection is a thread, and every clan has its own crest. Your family, friends and their relations join into one connected web, which you can explore like a galaxy.</p>
+      <p>ΔBD Family Web lets you build your family tree as a web. Every person is a point, every connection is a thread, and every family or clan has its own crest. Your family, friends and their relations all join into one connected web, which you can explore like a galaxy.</p>
     </section>
     <section class="setting-card">
-      <h2>Home and space</h2>
-      <p><strong>Move around:</strong> Drag, scroll, or use the arrow keys (hold Shift to move faster). Zoom with Ctrl + scroll, pinch, the + and − buttons (hold them to keep zooming), or the + and − keys. Press 0 or Reset to go back to the start.</p>
-      <p><strong>Space:</strong> The Sun, the eight planets with their moons, asteroids, comets, exoplanets, black holes, galaxies and star clusters are all on the map. Zoom in to see names and each object's surface. Tap an object to fly to it.</p>
-      <p><strong>Clans:</strong> Each clan you create appears in the galaxy with its own crest. Tap a clan crest to see its members in generation order, and the clans related to it.</p>
-      <p><strong>Full screen:</strong> The button at the bottom left hides the buttons and text, so you see only the webs. Press it again to show them.</p>
-      <p><strong>Search:</strong> Use the search bar to find a clan, a family name or a person.</p>
-    </section>
-    <section class="setting-card">
-      <h2>Projects</h2>
-      <p>Press <em>Projects</em> to open your projects. Each project has its own family tree and its own galaxy.</p>
-      <p>Use the ⋮ menu on a project to <strong>Rename</strong> it (title and description), <strong>Save</strong>, <strong>Share</strong> a link, or <strong>Delete</strong> it. Delete asks you to confirm first.</p>
-      <p><strong>Clan view:</strong> Press <em>Clan view</em> on a project card, or the galaxy button at the bottom right of its family tree, to open that project's own galaxy. Each project's galaxy has its own shape (spiral, barred spiral, elliptical or irregular) and colours. Its clans are shown as crests, joined by threads. Zoom and drag to look around, and tap a crest to see that clan's members, oldest generation first.</p>
-    </section>
-    <section class="setting-card">
-      <h2>Family tree</h2>
-      <p><strong>Start:</strong> The first person you add is you (me). Give each person a first and last name, clan, gender (male or female), status (living or deceased), and optionally a date of birth and a photo from your gallery or files.</p>
-      <p><strong>Connect people:</strong> Every new person must be connected to at least one person already in the tree. Choose the relation: Father, Mother, Spouse, Child, Sibling, Friend or Other. Use <em>Other</em> to describe your own relation.</p>
-      <p><strong>Add relative:</strong> Tap a person, then <em>Add relative</em>, and choose Parents, Spouse, Child, Sibling or Friend. The form opens with that relation already selected.</p>
-      <p><strong>Relatives list:</strong> A person's card lists their relatives in this order: Father, Mother, Spouse, Child, Sibling, then Friend and Other. Repeats are numbered, for example "1st spouse" and "2nd spouse". Scroll the list to see everyone.</p>
-      <p><strong>Move and look around:</strong> Drag a person to move them, or drag the background. Scroll or pinch to zoom. Imported people are arranged in generation rows, so family groups stay together.</p>
-      <p><strong>Modify and delete:</strong> Tap a person, then <em>Modify</em> to change their details or connections. <em>Delete</em> asks you to confirm before removing them.</p>
-      <p><strong>Undo and redo:</strong> The buttons at the top right of the family tree undo and redo your changes. On a computer, Ctrl+Z and Ctrl+Y do the same.</p>
-    </section>
-    <section class="setting-card">
-      <h2>Languages</h2>
-      <p>Press the language button on the family tree to switch between English, Tamil, Malayalam, Arabic, Hindi, Japanese and Mandarin. Buttons, relation names and clan words change with it. Names are shown in the language you choose if you have added a translation for them; otherwise the name you typed is shown. Add translations with <em>Names in other languages</em> in the person form.</p>
-    </section>
-    <section class="setting-card">
-      <h2>Settings, sharing and saving</h2>
-      <p><strong>Export and import:</strong> The gear icon on the projects page exports all your projects as CSV or JSON, and imports a file back. Importing adds each person to the project named in the file.</p>
-      <p><strong>Share:</strong> The Share option in a project's ⋮ menu creates a link. Anyone signed in who opens it sees the project read-only. Sharing needs the page to be opened on claude.ai.</p>
-      <p><strong>Phone:</strong> The phone's back button closes the open popup or goes back one screen. Swiping right from the left edge of the screen does the same. On the home page, back stays in the app.</p>
-      <p><strong>Good to know:</strong> Your projects, family members and clans are kept while this page is open. Export your data from Settings to keep a copy, and import it again later to restore it.</p>
+      <h2>How it works</h2>
+      <p><strong>Home:</strong> The home page is a galaxy of family webs. Move around by dragging, scrolling or using the arrow keys. Zoom with Ctrl + scroll, pinch, the + and − buttons (hold them to keep zooming), or the + and − keys. Press 0 or Reset to return to the start.</p>
+      <p><strong>Space:</strong> Tap a planet, moon, exoplanet, galaxy or black hole to fly there. Zoom in close to see its name and its surface.</p>
+      <p><strong>Clans:</strong> Each clan you create appears in the galaxy with its own crest. Tap a clan to see its members and the clans related to it.</p>
+      <p><strong>Search:</strong> Use the search bar at the top of the home page to find a clan, a family name or a person.</p>
+      <p><strong>Projects:</strong> Press <em>+ Add new project</em> to start a project. Each project has its own family tree. Use the ⋮ menu on a project to rename, save, share a read-only link or delete it. Anyone with the link can view the shared project.</p>
+      <p><strong>Family tree:</strong> The first person you add is you (me). Add family and friends, then connect each one to people already in the web and choose how they are related: Father, Mother, Sibling, Friend, Spouse, Child or Other. When you add a child to someone who has a spouse, the child is linked to both parents automatically, and a new spouse is linked to the partner's children too. Each clan has its own ring colour (up to 60 different colours). Imported files are arranged automatically, one row per generation. Press the arrange icon at the top to tidy any web again, one row per generation. Tap a person to see their details, add a relative, delete or modify them. Drag a person to move them, and drag the background to look around.</p>
+      <p><strong>Undo and redo:</strong> Use the arrows at the top of the family tree page, or Ctrl + Z and Ctrl + Y, to step back and forward through added, edited, deleted or moved people.</p>
+      <p><strong>Clan view:</strong> Press the galaxy button on the family tree page to see that project's clans as crests in space. Tap a clan to see its members in generation order.</p>
+      <p><strong>Languages:</strong> Press the globe icon to show names and labels in English, Tamil, Malayalam, Arabic, Hindi, Japanese or Mandarin.</p>
+      <p><strong>Full screen:</strong> Press the corner button at the bottom left of the home page or the family tree page to hide the tools and see only the web. Press it again, or Esc, to bring them back.</p>
+      <p><strong>Help:</strong> Press the ? icon for a step by step guide with a small practice model you can try.</p>
+      <p><strong>Relatives:</strong> Give each person a first name, last name, clan, gender (male or female), status (living or deceased), and an optional photo from your gallery or files.</p>
+      <p><strong>Settings:</strong> Press the gear icon on the projects page to export all your data as CSV or JSON, or to import a file. An imported file adds its people to the project named in the file.</p>
     </section>
     <section class="setting-card">
       <h2>Created by</h2>
       <p><strong>ABDULLAH</strong></p>
       <p>12 NOV 2026</p>
+    </section>
+    <section class="setting-card">
+      <h2>Version</h2>
+      <p>v2 - updated on 16 NOV 2026</p>
+    </section>
+    <section class="setting-card">
+      <h2>Good to know</h2>
+      <p>Your projects, family members and clans are kept while this page is open. Export your data from Settings to keep a copy, and import it again later to restore it.</p>
     </section>
   </div>
 </section>
