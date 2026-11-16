@@ -2495,6 +2495,7 @@
   document.getElementById('pcModify').addEventListener('click', () => { const p = personById(selectedId); if (p) { personCard.classList.remove('show'); openPersonModal(false, p); } });
   document.getElementById('addPersonBtn').addEventListener('click', () => openPersonModal(people().length === 0));
   document.getElementById('treeBackBtn').addEventListener('click', closeTree);
+  document.getElementById('arrangeBtn').addEventListener('click', arrangeTree);
 
   function openTree(p) {
     treeProject = p;
@@ -2506,6 +2507,7 @@
     treeScreen.classList.remove('hidden');
     treeResize();
     tv.zoom = 1; tv.camX = 0; tv.camY = 0;
+    if (p.tree.people.length > 1) fitTreeView();
     selectedId = null;
     personCard.classList.remove('show');
     updateTreeHint();
@@ -2586,37 +2588,38 @@
     if (e.key === 'Escape') closePersonModal();
   });
 
-  // Each generation has its own colour: Gen 1 is the oldest generation in the web
-  const GEN_COLORS = ['#ffc233', '#ff7043', '#a77bff', '#00e5ff', '#e040fb', '#c6e63a', '#ff5a8a', '#90a4ae'];
-  const genColor = (g) => GEN_COLORS[((g % GEN_COLORS.length) + GEN_COLORS.length) % GEN_COLORS.length];
-  let genNow = new Map();
-  let genLegendSig = '';
-  function refreshGenerations() {
-    genNow = treeProject ? generationMap(treeProject) : new Map();
-    const present = [...new Set(genNow.values())].sort((a, b) => a - b);
-    const sig = present.join(',');
-    if (sig === genLegendSig) return;
-    genLegendSig = sig;
-    const box = document.getElementById('genLegend');
-    box.textContent = '';
-    if (present.length < 2) return;      // one generation only: nothing to tell apart
-    present.forEach((g) => {
-      const item = document.createElement('span');
-      const dot = document.createElement('i');
-      dot.style.color = genColor(g);
-      item.append(dot, document.createTextNode('Gen ' + (g + 1)));
-      box.append(item);
+  // Each clan has its own colour (60 distinct colours; spread by the golden angle so the first ones differ most)
+  const CLAN_COLORS = (() => {
+    const out = [];
+    for (let i = 0; i < 60; i++) {
+      const hue = Math.round((i * 137.508) % 360);
+      const sat = [92, 78, 100][i % 3];
+      const lig = [60, 70, 54][Math.floor(i / 3) % 3];
+      out.push('hsl(' + hue + ' ' + sat + '% ' + lig + '%)');
+    }
+    return out;
+  })();
+  let clanColorMap = new Map();   // clan key -> colour
+  const clanKeyOf = (p) => String(p.clan || '').trim().toLowerCase();
+  const clanColorOf = (p) => clanColorMap.get(clanKeyOf(p)) || CLAN_COLORS[0];
+  // Clans get colours in the order they first appear in the web, so a clan keeps its colour as people are added
+  function refreshClanColors() {
+    const next = new Map();
+    (treeProject && treeProject.tree ? treeProject.tree.people : []).forEach((p) => {
+      const k = clanKeyOf(p);
+      if (!next.has(k)) next.set(k, CLAN_COLORS[next.size % CLAN_COLORS.length]);
     });
+    clanColorMap = next;
   }
 
   // Draw the web thread
   function drawPerson(p, t, PX) {
     const R = NODE_R;
     const sel = p.id === selectedId;
-    const gc = genColor(genNow.get(p.id) || 0);
+    const gc = clanColorOf(p);
     tctx.globalAlpha = p.status === 'deceased' ? 0.5 : 1;
 
-    // Ring in the colour of the person's generation
+    // Ring in the colour of the person's clan
     tctx.strokeStyle = gc;
     tctx.lineWidth = 3.2 * PX;
     tctx.beginPath();
@@ -2634,7 +2637,7 @@
       tctx.beginPath(); tctx.arc(p.x, p.y, R + (p.isMe ? 17 : 11) * PX, 0, Math.PI * 2); tctx.stroke();
     }
 
-    // Photo or initials: circle tinted with the generation colour
+    // Photo or initials: circle tinted with the clan colour
     tctx.fillStyle = '#070808';
     tctx.beginPath(); tctx.arc(p.x, p.y, R, 0, Math.PI * 2); tctx.fill();
     tctx.save();
@@ -2760,7 +2763,7 @@
       }
     }
 
-    refreshGenerations();
+    refreshClanColors();
     for (const p of list) drawPerson(p, t, PX);
   }
 
@@ -2969,6 +2972,123 @@
       it.gen = cache.get(it.pr).get(it.person.id) || 0;
     });
     return items.slice().sort((a, b) => a.gen - b.gen);
+  }
+
+  /* ----- Auto layout: one row per generation, couples side by side, children under their parents ----- */
+  function layoutGenerations(list) {
+    const SP = 180, ROW_H = 240, STAG = 110, GAP = 210, GAP_S = 95, CROWD = 8;
+    const pos = new Map();
+    if (!list.length) return { pos, minX: 0, maxX: 0, minY: 0, maxY: 0 };
+    const gen = generationMap({ tree: { people: list } });
+    const byId = new Map(list.map((p) => [p.id, p]));
+
+    // Spouses form one unit that moves as a block
+    const uf = new Map(list.map((p) => [p.id, p.id]));
+    const find = (a) => { while (uf.get(a) !== a) { uf.set(a, uf.get(uf.get(a))); a = uf.get(a); } return a; };
+    list.forEach((p) => p.links.forEach((l) => {
+      if (l.rel === 'Spouse' && byId.has(l.id) && gen.get(l.id) === gen.get(p.id)) {
+        const a = find(p.id), b = find(l.id); if (a !== b) uf.set(b, a);
+      }
+    }));
+    const unitsMap = new Map();
+    list.forEach((p) => {
+      const r = find(p.id);
+      if (!unitsMap.has(r)) unitsMap.set(r, { members: [], gen: gen.get(p.id) || 0, x: 0, desired: 0, parents: new Set(), children: new Set(), others: new Set() });
+      unitsMap.get(r).members.push(p);
+    });
+    const units = [...unitsMap.values()];
+    const unitOf = new Map();
+    units.forEach((u) => { u.members.sort((a, b) => a.id - b.id); u.members.forEach((m) => unitOf.set(m.id, u)); });
+    list.forEach((p) => p.links.forEach((l) => {
+      const q = byId.get(l.id); if (!q) return;
+      const up = unitOf.get(p.id), uq = unitOf.get(q.id);
+      if (up === uq) return;
+      if (l.rel === 'Child') { up.parents.add(uq); uq.children.add(up); }
+      else if (l.rel === 'Father' || l.rel === 'Mother') { up.children.add(uq); uq.parents.add(up); }
+      else { up.others.add(uq); uq.others.add(up); }
+    }));
+
+    const rows = new Map();
+    units.forEach((u) => { if (!rows.has(u.gen)) rows.set(u.gen, []); rows.get(u.gen).push(u); });
+    const gens = [...rows.keys()].sort((a, b) => a - b);
+    const halfW = (u) => (u.members.length - 1) * SP / 2;
+    const crowded = (row) => row.reduce((n, u) => n + u.members.length, 0) > CROWD;
+    const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+
+    function placeRow(row) {
+      const gap = crowded(row) ? GAP_S : GAP;
+      row.forEach((u, i) => {
+        const min = i === 0 ? -Infinity : row[i - 1].x + halfW(row[i - 1]) + gap + halfW(u);
+        u.x = Math.max(u.desired, min);
+      });
+      const shift = mean(row.map((u) => u.desired - u.x));
+      row.forEach((u) => { u.x += shift; });
+    }
+    const sortPlace = (row) => { row.sort((a, b) => a.desired - b.desired || a.x - b.x); placeRow(row); };
+
+    // Start: each row grouped by clan, then name
+    gens.forEach((g) => {
+      const row = rows.get(g);
+      row.sort((a, b) => {
+        const ka = (a.members[0].clan || '').toLowerCase() + '|' + (a.members[0].first || '').toLowerCase();
+        const kb = (b.members[0].clan || '').toLowerCase() + '|' + (b.members[0].first || '').toLowerCase();
+        return ka < kb ? -1 : ka > kb ? 1 : 0;
+      });
+      row.forEach((u, i) => { u.desired = i * GAP; });
+      placeRow(row);
+    });
+
+    const pull = (u, first, second, third) => {
+      for (const set of [first, second, third]) {
+        if (set && set.size) return mean([...set].map((v) => v.x));
+      }
+      return u.x;
+    };
+    const down = () => gens.forEach((g) => { const row = rows.get(g); row.forEach((u) => { u.desired = pull(u, u.parents, u.others, u.children); }); sortPlace(row); });
+    const up = () => gens.slice().reverse().forEach((g) => { const row = rows.get(g); row.forEach((u) => { u.desired = pull(u, u.children, u.others, u.parents); }); sortPlace(row); });
+    for (let i = 0; i < 4; i++) { down(); up(); }
+    down();
+
+    // Rows: one per generation; crowded rows zig-zag so names do not collide
+    let y = 0, minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    const g0 = gens[0], g1 = gens[gens.length - 1];
+    for (let g = g0; g <= g1; g++) {
+      const row = rows.get(g) || [];
+      const stag = crowded(row);
+      row.forEach((u, i) => {
+        const yy = y + (stag && i % 2 ? STAG : 0);
+        u.members.forEach((m, k) => {
+          const xx = u.x + (k - (u.members.length - 1) / 2) * SP;
+          pos.set(m.id, { x: xx, y: yy });
+          minX = Math.min(minX, xx); maxX = Math.max(maxX, xx); minY = Math.min(minY, yy); maxY = Math.max(maxY, yy);
+        });
+      });
+      y += ROW_H + (stag ? STAG : 0);
+    }
+    return { pos, minX, maxX, minY, maxY };
+  }
+
+  // Fit the whole web on the screen (never zoomed in past 100%)
+  function fitTreeView() {
+    const list = people();
+    if (!list.length) return;
+    const xs = list.map((p) => p.x), ys = list.map((p) => p.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+    const w = (maxX - minX) + 220, h = (maxY - minY) + 120;
+    tv.zoom = Math.min(1, Math.max(0.06, Math.min(tv.W / w, (tv.H - 200) / h)));   // leaves room for the title and key on top
+    tv.camX = (minX + maxX) / 2;
+    tv.camY = (minY + maxY) / 2 - 30 / tv.zoom;
+  }
+
+  function arrangeTree() {
+    const list = people();
+    if (list.length < 2) { toast('Add more people to arrange them'); return; }
+    const L = layoutGenerations(list);
+    const cx = (L.minX + L.maxX) / 2;
+    list.forEach((p) => { const q = L.pos.get(p.id); if (q) { p.x = q.x - cx; p.y = q.y - L.minY; } });
+    persistProjects(); histPush();
+    fitTreeView();
+    toast('Arranged by generation: oldest at the top');
   }
 
   function showGroupView(kind, key) {
@@ -3337,40 +3457,6 @@
   }
 
   // Adds the people to the project named in the file (creating the project if needed)
-  // Lays a project's people out in clean rows: oldest generation at the top,
-  // relatives next to each other inside each row, and nobody on top of anyone else
-  function arrangeProject(pr) {
-    const list = pr.tree ? pr.tree.people : [];
-    if (!list.length) return;
-    const gen = generationMap(pr);
-    const byId = new Map(list.map((q) => [q.id, q]));
-    const order = new Map();
-    let idx = 0;
-    list.slice().sort((a, b) => (b.isMe ? 1 : 0) - (a.isMe ? 1 : 0)).forEach((start) => {
-      if (order.has(start.id)) return;
-      order.set(start.id, idx++);
-      const queue = [start.id];
-      while (queue.length) {
-        const cur = byId.get(queue.shift());
-        cur.links.forEach((l) => {
-          if (byId.has(l.id) && !order.has(l.id)) { order.set(l.id, idx++); queue.push(l.id); }
-        });
-      }
-    });
-    const rows = new Map();
-    list.forEach((q) => {
-      const g = gen.get(q.id) || 0;
-      if (!rows.has(g)) rows.set(g, []);
-      rows.get(g).push(q);
-    });
-    const GAP_X = 210, GAP_Y = 220;
-    [...rows.keys()].sort((a, b) => a - b).forEach((g) => {
-      const row = rows.get(g).sort((a, b) => order.get(a.id) - order.get(b.id));
-      const width = (row.length - 1) * GAP_X;
-      row.forEach((q, i) => { q.x = -width / 2 + i * GAP_X; q.y = g * GAP_Y; });
-    });
-  }
-
   function importProjects(list) {
     let peopleCount = 0;
     const touched = new Set();
@@ -3394,28 +3480,22 @@
         p.links = p.links.map((l) => ({ id: idMap.get(l.id), rel: l.rel })).filter((l) => l.id !== undefined);
       });
 
-      // Place the people: unlinked ones in a row, linked ones around the person they connect to
-      const offsetX = t.people.length ? Math.max(...t.people.map((q) => q.x)) + 420 : 0;
+      // Place the people by generation: oldest row on top, couples side by side, children under their parents.
+      // A project that already has people gets the imported block to the right of them.
+      const L = layoutGenerations(incoming);
       const placed = new Map();
-      let k = 0;
-      incoming.forEach((p) => {
-        if (!p.links.length) {
-          placed.set(p.id, { x: offsetX + (k % 3) * 220, y: Math.floor(k / 3) * 200 });
-          k++;
-        }
-      });
-      let guard = 0;
-      while (placed.size < incoming.length && guard++ < 60) {
-        incoming.forEach((p) => {
-          if (placed.has(p.id)) return;
-          const base = p.links.map((l) => placed.get(l.id)).find(Boolean);
-          if (!base) return;
-          const a = Math.random() * Math.PI * 2;
-          const d = 170 + Math.random() * 40;
-          placed.set(p.id, { x: base.x + Math.cos(a) * d, y: base.y + Math.sin(a) * d });
-        });
+      let shiftX, shiftY;
+      if (t.people.length) {
+        shiftX = Math.max(...t.people.map((q) => q.x)) + 300 - L.minX;
+        shiftY = Math.min(...t.people.map((q) => q.y)) - L.minY;
+      } else {
+        shiftX = -(L.minX + L.maxX) / 2;
+        shiftY = -L.minY;
       }
-      incoming.forEach((p) => { if (!placed.has(p.id)) placed.set(p.id, { x: offsetX, y: 0 }); });
+      incoming.forEach((p) => {
+        const q = L.pos.get(p.id) || { x: 0, y: 0 };
+        placed.set(p.id, { x: q.x + shiftX, y: q.y + shiftY });
+      });
 
       const created = [];
       incoming.forEach((p) => {
@@ -3437,9 +3517,9 @@
         peopleCount++;
       });
       created.forEach((person) => recordClanPairs(person, pr));
-      arrangeProject(pr);
       touched.add(pr);
     }
+    persistProjects();
     renderProjects();
     return { people: peopleCount, projects: touched.size };
   }
@@ -3905,68 +3985,6 @@
     openProjectGalaxy(treeProject);
   });
 
-  /* ----- Phone back button and swipe from the left edge ----- */
-  const LAYER_MODALS = [
-    ['confirmModal', 'confirmNo'], ['relPickModal', 'relPickClose'], ['langModal', 'langClose'],
-    ['groupModal', 'gClose'], ['personModal', 'pCancel'], ['renameModal', 'renCancel'], ['projectModal', 'cancelProjectBtn']
-  ];
-  const LAYER_SCREENS = [
-    ['pgScreen', 'pgBackBtn'], ['treeScreen', 'treeBackBtn'], ['aboutScreen', 'aboutBackBtn'],
-    ['settingsScreen', 'settingsBackBtn'], ['sharedScreen', 'sharedBackBtn'], ['projectScreen', 'backBtn']
-  ];
-  const isOpen = (id) => { const el = document.getElementById(id); return !!el && !el.classList.contains('hidden'); };
-  const cardOpen = () => { const el = document.getElementById('personCard'); return !!el && el.classList.contains('show'); };
-
-  // How many layers are open on top of the home page
-  function layerCount() {
-    return LAYER_MODALS.filter(([id]) => isOpen(id)).length + (cardOpen() ? 1 : 0) + LAYER_SCREENS.filter(([id]) => isOpen(id)).length;
-  }
-
-  // Closes the top-most open layer, the same way its Back button does. Returns false on the home page.
-  function backAction() {
-    for (const [id, close] of LAYER_MODALS) {
-      if (isOpen(id)) { document.getElementById(close).click(); return true; }
-    }
-    if (cardOpen()) { document.getElementById('personCard').classList.remove('show'); return true; }
-    for (const [id, back] of LAYER_SCREENS) {
-      if (isOpen(id)) { document.getElementById(back).click(); return true; }
-    }
-    return false;
-  }
-
-  // Keeps the browser history in step with the open layers, so the phone's back button works
-  let prevLayers = 0, ignorePop = 0;
-  function syncHistory() {
-    const c = layerCount();
-    if (c > prevLayers) {
-      for (let i = prevLayers; i < c; i++) history.pushState({ layer: true }, '');
-    } else if (c < prevLayers) {
-      for (let i = c; i < prevLayers; i++) { ignorePop++; history.back(); }
-    }
-    prevLayers = c;
-  }
-  prevLayers = layerCount();
-  history.pushState({ guard: true }, '');
-  new MutationObserver(syncHistory).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'] });
-
-  window.addEventListener('popstate', () => {
-    if (ignorePop > 0) { ignorePop--; return; }
-    if (!backAction()) history.pushState({ guard: true }, ''); // home page: stay in the app
-    prevLayers = layerCount();
-  });
-
-  // Swipe right from the left edge of the screen to go back
-  let edgeStart = null;
-  window.addEventListener('pointerdown', (e) => {
-    edgeStart = e.pointerType === 'touch' && e.clientX < 28 ? { x: e.clientX, y: e.clientY } : null;
-  });
-  window.addEventListener('pointerup', (e) => {
-    if (!edgeStart) return;
-    const dx = e.clientX - edgeStart.x, dy = Math.abs(e.clientY - edgeStart.y);
-    edgeStart = null;
-    if (dx > 90 && dy < 70) backAction();
-  });
-
   /* ----- Delete person (with confirmation) ----- */
   const confirmModal = document.getElementById('confirmModal');
   let confirmAction = null;
@@ -4149,6 +4167,7 @@
   }
   document.getElementById('aboutBtn').addEventListener('click', () => showAbout('home'));
   document.getElementById('aboutBtnProjects').addEventListener('click', () => showAbout('projects'));
+  document.getElementById('profileBtn').addEventListener('click', () => toast('Profile is coming soon'));
   document.getElementById('aboutBackBtn').addEventListener('click', backFromAbout);
 
   /* ----- Rename project ----- */
@@ -4299,20 +4318,28 @@
   const STEPS = [
     { t: 'Welcome to the galaxy', d: 'The home page is a galaxy of clan crests. Drag to look around, pinch (or Ctrl + scroll) to zoom, and tap a crest to see the family inside it.',
       s: () => SV(hl(80, 100, 160, 80) + hl(160, 80, 240, 110) + hl(160, 80, 150, 40) + hn(80, 100, 'Nair', 0) + hn(160, 80, 'Pillai', 1, 19) + hn(240, 110, 'Menon', 0) + hn(150, 40, 'Iyer', 0, 12) + ht(160, 80) + hx(160, 168, 'Tap a crest to open its family')) },
-    { t: 'Add a project', d: 'Press "Add project" at the top right. A project is one family web, for example "My family". Then press "+ Add new project" and give it a name.',
-      s: () => SV(brand + hi(14, 36) + hi(40, 36, '<text x="50" y="50" text-anchor="middle" font-size="11" fill="#eee">?</text>') + '<rect x="68" y="36" width="140" height="20" rx="10" fill="#101010"/>' + hx(138, 50, 'Search clan or family', 8) + hb(222, 36, 84, 'Add project', true) + ht(264, 46) + hx(160, 120, 'Top bar of the home page', 9)) },
-    { t: 'Open your project', d: 'Your projects are listed as cards. Tap a card to open its family web, or use its menu to rename or share it.',
+    { t: 'Add a project', d: 'Press "Projects" at the top right. A project is one family web, for example "My family". Then press "+ Add new project" and give it a name.',
+      s: () => SV(brand + hi(14, 36) + hi(40, 36, '<text x="50" y="50" text-anchor="middle" font-size="11" fill="#eee">?</text>') + '<rect x="68" y="36" width="140" height="20" rx="10" fill="#101010"/>' + hx(138, 50, 'Search clan or family', 8) + hb(222, 36, 84, 'Projects', true) + ht(264, 46) + hx(160, 120, 'Top bar of the home page', 9)) },
+    { t: 'Open your project', d: 'Your projects are listed as cards. Tap a card to open its family web, or use the ⋮ menu to rename, save, share, open its settings or delete it.',
       s: () => SV(hx(60, 26, 'Projects', 12, '#fff') + hb(200, 12, 108, '+ Add new project', true) + '<rect x="16" y="50" width="130" height="80" rx="14" fill="#101010" stroke="#333"/>' + hx(81, 84, 'My family', 11, '#fff') + hx(81, 102, 'Tap to open', 8) + ht(81, 90) + '<rect x="160" y="50" width="130" height="80" rx="14" fill="#101010" stroke="#222"/>') },
     { t: 'Add yourself first', d: 'In the family web page press "+ Add person". Fill the name, clan, gender and status, then choose "Me" for the very first person. You become the first thread of the web.',
       s: () => SV(hi(172, 10, '<path d="M6 10h8M10 6v8" stroke="#eee" stroke-width="1.4"/>') + hb(200, 10, 40, 'Back') + hb(246, 10, 66, '+ Add person', true) + ht(279, 20) + hn(160, 100, 'Me', 1, 20)) },
     { t: 'Add relatives and friends', d: 'Tap anyone in the web to open their card, then press "Add relative". Pick who they are connected to and the relation, such as Father, Sibling or Friend.',
       s: () => SV(hl(160, 50, 90, 80) + hl(160, 50, 230, 80) + hn(160, 50, 'Me', 1) + hn(90, 80, 'Father') + hn(230, 80, 'Mother') + '<rect x="50" y="112" width="220" height="56" rx="14" fill="#0b0b0b" stroke="#444"/>' + hb(58, 144, 48, 'Add relative', true) + hb(110, 144, 36, 'Delete') + hb(150, 144, 40, 'Modify', true) + hb(194, 144, 38, 'Close') + hx(160, 130, 'Me · Living · 1 thread', 8) + ht(82, 154)) },
-    { t: 'Move, zoom and look around', d: 'Drag a person to move them. Drag empty space to pan. Pinch with two fingers, or Ctrl + scroll on a computer, to zoom. Everything saves by itself.',
+    { t: 'Move, zoom and look around', d: 'Drag a person to move them. Drag empty space to pan. Pinch with two fingers, or Ctrl + scroll on a computer, to zoom. Use the + and − keys or the zoom buttons on the home page too.',
       s: () => SV(hl(90, 100, 160, 70) + hl(160, 70, 230, 100) + hn(90, 100, 'Dad') + hn(230, 100, 'Mom') + '<g class="hp-move">' + hn(160, 70, 'Me', 1) + '<circle cx="160" cy="70" r="4" fill="#3cff7a"/></g>' + hx(160, 160, 'Drag a person to move it')) },
     { t: 'Undo and redo', d: 'Made a mistake? Use the arrows at the top right of the family web page. Undo steps back through added, edited, deleted or moved people, and redo brings them back. On a computer you can also press Ctrl + Z and Ctrl + Y.',
       s: () => SV(hi(206, 10, '<path d="M8 12 5 9l3-3M5 9h6a3 3 0 0 1 0 6H9" fill="none" stroke="#eee" stroke-width="1.3"/>') + hi(232, 10, '<path d="m12 12 3-3-3-3M15 9H9a3 3 0 0 0 0 6h2" fill="none" stroke="#eee" stroke-width="1.3"/>') + hb(258, 10, 54, 'Add person', true) + ht(216, 20) + hn(120, 100, 'Me', 1) + hn(200, 120, 'New') + hl(120, 100, 200, 120) + hx(160, 168, 'Undo removes "New"; redo brings it back')) },
     { t: 'Full screen view', d: 'Press the corner button at the bottom left, on the home page or the family web page, to hide all tools and see only the family members and clan webs. Press it again, or Esc, to bring the tools back.',
       s: () => SV(hl(90, 70, 160, 90) + hl(160, 90, 235, 60) + hn(90, 70, 'Dad') + hn(160, 90, 'Me', 1) + hn(235, 60, 'Mom') + '<rect x="12" y="144" width="24" height="24" rx="8" fill="#2a2a2a"/><path d="M19 152v-3h3M33 152v-3h-3M19 160v3h3M33 160v3h-3" transform="translate(-6 3)" fill="none" stroke="#eee" stroke-width="1.3"/>' + ht(24, 156) + hx(190, 164, 'Only the web, no buttons')) },
+    { t: 'Arrange by generation', d: 'Press the arrange icon at the top of the family web page to tidy everyone into rows, one row per generation. Imported files are arranged this way automatically.',
+      s: () => SV(hi(194, 10, '<path d="M6 7h8M5 10h10M6 13h8" stroke="#eee" stroke-width="1.4" fill="none"/>') + hi(220, 10) + hb(246, 10, 66, '+ Add person', true) + ht(204, 20) + hl(110, 70, 160, 110) + hl(210, 70, 160, 110) + hl(160, 110, 160, 150) + hn(110, 70, 'Dad') + hn(210, 70, 'Mom') + hn(160, 110, 'Me', 1) + hn(160, 150, 'Son', 0, 13) + hx(50, 74, 'Gen 1', 8) + hx(50, 114, 'Gen 2', 8) + hx(50, 154, 'Gen 3', 8)) },
+    { t: 'Clan view (galaxy)', d: 'Press the galaxy button at the bottom of the family web page to see the clans of that project as crests in space. Tap a clan crest to see its members in generation order.',
+      s: () => SV('<circle cx="160" cy="90" r="44" fill="none" stroke="#2a2f2d" stroke-width="1"/><circle cx="160" cy="90" r="72" fill="none" stroke="#1c201e" stroke-width="1"/>' + hn(160, 90, 'Nair', 1, 19) + hn(108, 62, 'Menon', 0, 14) + hn(214, 118, 'Pillai', 0, 14) + hn(122, 140, 'Iyer', 0, 12) + ht(160, 90) + hx(160, 172, 'Tap a clan crest to see its members')) },
+    { t: 'Choose your language', d: 'Press the globe icon on the family web page to show names and labels in English, Tamil, Malayalam, Arabic, Hindi, Japanese or Mandarin. Arabic switches the page to right to left.',
+      s: () => SV(hi(194, 10, '<circle cx="204" cy="20" r="6" fill="none" stroke="#3cff7a" stroke-width="1.3"/><path d="M198 20h12" stroke="#3cff7a" stroke-width="1.2"/>') + ht(204, 20) + hb(70, 44, 180, 'English', true) + hb(70, 70, 180, 'தமிழ்') + hb(70, 96, 180, 'മലയാളം') + hb(70, 122, 180, 'العربية') + hx(160, 168, 'Pick a language from the list')) },
+    { t: 'Save, share and keep a copy', d: 'In a project\u2019s ⋮ menu use Save to mark it saved, or Share to get a read-only link that anyone can open. Press the gear icon on the projects page to export everything as CSV or JSON, or to import a file again.',
+      s: () => SV('<rect x="170" y="20" width="120" height="108" rx="12" fill="#0b0b0b" stroke="#444"/>' + hx(230, 40, 'Rename', 9, '#eee') + hx(230, 58, 'Save', 9, '#eee') + hx(230, 76, 'Share', 9, '#3cff7a') + hx(230, 94, 'Settings', 9, '#eee') + hx(230, 112, 'Delete', 9, '#ff7a7a') + ht(230, 72) + '<rect x="20" y="40" width="130" height="70" rx="14" fill="#101010" stroke="#333"/>' + hx(85, 70, 'My family', 11, '#fff') + hx(85, 90, '⋮ Project options', 8) + hx(160, 160, 'Export and import: gear icon on the Projects page')) },
     { t: 'Try it yourself', d: 'This small model works like the real thing. Drag the people, tap one to select it, add a person to connect to it, then try Undo and Redo.', live: true }
   ];
   let hpI = 0;
