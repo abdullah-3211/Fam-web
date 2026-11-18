@@ -1,4 +1,4 @@
-  :root {
+:root {
     --ink: #f2f4f3;
     --muted: #8b918e;
     --green: #3cff7a;
@@ -542,14 +542,20 @@
   #pgScreen .zoom-ctrl { bottom: max(18px, env(safe-area-inset-bottom)); }
   /* Family tree top row: undo, redo, language, Back and + Add person on one line at the top right */
   #treeScreen .tree-head .page-actions { flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px 8px; max-width: 100%; overflow: visible; padding: 2px 2px 18px; margin-bottom: -18px; }
-  @media (max-width: 420px) {
-    #treeScreen .tree-head { padding-left: 14px; padding-right: 14px; }
-    #treeScreen .tree-head .page-actions { gap: 6px; }
-    #treeScreen .tree-head .page-actions .icon-btn { width: 38px; height: 38px; min-width: 38px; }
-    #treeScreen .tree-head .page-actions .white-clay { padding: 10px 11px; font-size: 0.8rem; }
+  #restoreLayoutBtn:disabled, #arrangeBtn:disabled { opacity: 0.35; cursor: default; }
+  /* Tree page: undo, redo, language, arrange, restore, Back and + Add person stay on one row */
+  #treeScreen .tree-head .page-actions { flex-wrap: nowrap; }
+  #treeScreen .tree-head .page-actions .white-clay { white-space: nowrap; flex: none; }
+  @media (min-width: 421px) {
+    #treeScreen .tree-head .page-actions .icon-btn { width: 42px; height: 42px; min-width: 42px; }
+    #treeScreen .tree-head .page-actions .white-clay { padding: 12px 14px; font-size: 0.85rem; }
   }
-  #treeScreen .tree-head .page-actions .icon-btn { width: 42px; height: 42px; min-width: 42px; }
-  #treeScreen .tree-head .page-actions .white-clay { padding: 12px 14px; font-size: 0.85rem; white-space: nowrap; flex: none; }
+  @media (max-width: 420px) {
+    #treeScreen .tree-head { padding-left: 10px; padding-right: 10px; }
+    #treeScreen .tree-head .page-actions { gap: 3px; }
+    #treeScreen .tree-head .page-actions .icon-btn { width: 32px; height: 32px; min-width: 32px; border-radius: 12px; }
+    #treeScreen .tree-head .page-actions .white-clay { padding: 10px 8px; font-size: 0.72rem; }
+  }
   .sr-only-file { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
   .rel-text { flex-basis: 100%; padding: 10px 12px; font-size: 0.85rem; }
   .link-row {
@@ -774,7 +780,15 @@
   /* ---------- Undo / redo, focus mode, help ---------- */
   .icon-btn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
   .icon-stack { display: flex; flex-direction: row; gap: 12px; align-items: flex-start; flex: none; }
-  @media (max-width: 600px) { .icon-stack { flex-direction: column; gap: 16px; } }
+  /* About, Help, search, Projects and profile always sit on one row under the title */
+  .icon-stack { flex-direction: row; align-items: center; }
+  @media (max-width: 600px) {
+    header { padding-left: 14px; padding-right: 14px; }
+    .header-row, header .actions, .icon-stack { gap: 8px; }
+    .icon-stack .icon-btn, header .actions .icon-btn { width: 38px; height: 38px; min-width: 38px; border-radius: 14px; }
+    header .actions .white-clay { padding: 11px 12px; font-size: 0.85rem; white-space: nowrap; flex: none; }
+    .header-row .search-input { padding: 11px 12px; font-size: 0.9rem; }
+  }
   .fs-btn {
     position: fixed;
     left: max(16px, env(safe-area-inset-left));
@@ -821,3 +835,20 @@
   .clan-btn { position: fixed; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); z-index: 2; pointer-events: auto; }
   .clan-btn svg { display: block; }
   body.focus-mode #treeScreen .clan-btn { display: none; }
+  .gen-head { margin: 16px 0 6px; }
+  /* Popups fade in smoothly (skipped when the phone asks for less motion) */
+  @keyframes modalIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal:not(.hidden) { animation: modalIn 180ms ease-out; }
+  @media (prefers-reduced-motion: reduce) { .modal:not(.hidden) { animation: none; } }
+
+#authHost{z-index:6;background:#000}
+
+.side-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.35); opacity: 0; pointer-events: none; transition: opacity .25s ease; z-index: 59; }
+  .side-scrim.open { opacity: 1; pointer-events: auto; }
+  .side-page { position: fixed; top: 0; right: 0; bottom: 0; width: min(86vw, 340px); box-sizing: border-box; display: flex; flex-direction: column; background: linear-gradient(160deg, #5d646d 0%, #2b2f35 45%, #4a4f57 70%, #1d2024 100%); color: var(--ink, #f2f4f3); border-left: 1px solid rgba(255,255,255,.12); border-radius: 30px 0 0 30px; transform: translateX(100%); transition: transform .25s ease; z-index: 60; padding: calc(env(safe-area-inset-top, 0px) + 14px) 18px 12px; overflow: hidden; }
+  .side-page.open { transform: none; }
+  .side-page .profile-card { background: linear-gradient(160deg, #1a1d1e 0%, #0d0f10 70%); border-radius: 30px; padding: 14px 16px 12px; margin-bottom: 10px; text-align: center; box-shadow: inset 0 2px 0 rgba(255,255,255,.07), inset 0 -14px 24px rgba(0,0,0,.55), 0 20px 40px rgba(0,0,0,.6), 0 0 0 1px rgba(60,255,122,.12); }
+  .side-page button.white-clay { display: flex; align-items: center; justify-content: flex-start; text-align: left; width: 100%; padding: 10px 16px; font-size: 0.85rem; }
+  .side-page label { display: block; margin-bottom: 12px; font-size: .9rem; }
+  .side-page input { width: 100%; margin-top: 6px; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(255,255,255,.14); background: #0b0b0b; color: var(--ink, #f2f4f3); box-sizing: border-box; font: inherit; }
+  .side-page input:focus { outline: none; border-color: var(--green, #3cff7a); box-shadow: 0 0 0 3px rgba(60,255,122,.18); }

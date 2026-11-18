@@ -124,6 +124,8 @@
     let zoom = INIT_ZOOM, camX = 0, camY = 0;
     let suppressTap = false;
     const touches = new Map();
+    let tapCandidate = null;
+    let lastTapX = -99, lastTapY = -99, lastTapTime = 0;
     let dragStart = null, pinchDist = 0;
     const held = new Set();
     let shiftHeld = false;
@@ -1126,8 +1128,9 @@
     function clanR() { return CREST_R; }
 
     function findClan(px, py) {
-      if (!clanRegistry.length || alphaFor('clan') < 0.2) return -1;
-      const reach = clanR() * scale() + 12;
+      if (!clanRegistry.length || alphaFor('clan') < 0.05) return -1;
+      // Generous tap area around each crest so it is easy to hit with a finger
+      const reach = Math.max(clanR() * scale() + 12, 34);
       let best = -1, bestD = Infinity;
       for (let i = 0; i < clanRegistry.length; i++) {
         const k = clanRegistry[i];
@@ -1439,7 +1442,7 @@
         const cr = clanR() * scale();
         for (const k of clanRegistry) {
           const sp = toScreen(k.x, k.y);
-          ctx.fillText(k.name, sp.x, sp.y + cr + 8);
+          ctx.fillText((k.localNames && k.localNames[lang]) || k.name, sp.x, sp.y + cr + 8);
         }
       }
 
@@ -1489,6 +1492,9 @@
     function clearHover() { hoverFam = -1; hoverClan = -1; hoverVisit = -1; tip.classList.remove('show'); }
 
     function tapAt(x, y) {
+      const tapNow = performance.now();
+      if (tapNow - lastTapTime < 450 && Math.hypot(x - lastTapX, y - lastTapY) < 12) return;   // same tap already handled
+      lastTapTime = tapNow; lastTapX = x; lastTapY = y;
       if (visitView) { const b = visitView.back; visitView = null; startReturn(b, performance.now()); return; }
       if (suppressTap) { suppressTap = false; return; }
       const ci = findClan(x, y);
@@ -1541,7 +1547,9 @@
       if (touches.size === 1) {
         dragStart = { x: e.clientX, y: e.clientY, camX, camY, moved: false };
         suppressTap = false;
+        tapCandidate = { x: e.clientX, y: e.clientY, id: e.pointerId, moved: false };
       } else if (touches.size === 2) {
+        tapCandidate = null;
         const [a, b] = [...touches.values()];
         pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
         dragStart = null;
@@ -1560,7 +1568,7 @@
         suppressTap = true;
       } else if (touches.size === 1 && dragStart) {
         const dx = e.clientX - dragStart.x, dy = e.clientY - dragStart.y;
-        if (Math.hypot(dx, dy) > 5) dragStart.moved = true;
+        if (Math.hypot(dx, dy) > 5) { dragStart.moved = true; if (tapCandidate) tapCandidate.moved = true; }
         if (dragStart.moved) {
           camX = dragStart.camX - dx / scale();
           camY = dragStart.camY - dy / scale();
@@ -1570,7 +1578,13 @@
     });
 
     function endPointer(e) {
+      const tap = tapCandidate;
+      tapCandidate = null;
       touches.delete(e.pointerId);
+      if (tap && tap.id === e.pointerId && !tap.moved && touches.size === 0 && e.type === 'pointerup') {
+        suppressTap = false;
+        tapAt(tap.x, tap.y);
+      }
       if (touches.size < 2) pinchDist = 0;
       if (touches.size === 0) {
         dragStart = null;
@@ -1680,18 +1694,56 @@
   const projDesc = document.getElementById('projDesc');
   const projError = document.getElementById('projError');
   const PROJECTS_STORAGE_KEY = 'abd-family-web-projects-v1';
+  // Projects saved by older versions are brought up to v2.1: child numbers must be 1 to 10, anything else is removed
+  function migrateProject(project) {
+    if (!project || !project.tree || !Array.isArray(project.tree.people)) return;
+    const people = project.tree.people;
+    const byId = new Map(people.map((q) => [q.id, q]));
+    people.forEach((person) => {
+      (person.links || []).forEach((l) => {
+        if (l.order !== undefined && !(Number.isInteger(l.order) && l.order >= 1 && l.order <= 10)) delete l.order;
+      });
+    });
+    if (project.childNumbersV21) return;
+    // One-time: number existing children under each parent in the order they were added (1 to 10)
+    people.forEach((parent) => {
+      const kids = people.filter((c) => c !== parent && (c.links || []).some((l) => l.id === parent.id && l.rel === 'Child'));
+      kids.slice(0, 10).forEach((c, i) => {
+        const link = c.links.find((l) => l.id === parent.id && l.rel === 'Child');
+        if (link && link.order === undefined) link.order = i + 1;
+      });
+    });
+    // The same number shows on the other parent's thread too
+    const spouseIdsOf = (q) => people.filter((o) => o.id !== q.id && (
+      (q.links || []).some((l) => l.id === o.id && l.rel === 'Spouse') ||
+      (o.links || []).some((l) => l.id === q.id && l.rel === 'Spouse'))).map((o) => o.id);
+    people.forEach((child) => {
+      (child.links || []).forEach((l) => {
+        if (l.rel !== 'Child' || !l.order) return;
+        const par = byId.get(l.id);
+        if (!par) return;
+        spouseIdsOf(par).forEach((sid) => {
+          const other = child.links.find((m) => m.id === sid && m.rel === 'Child');
+          if (other && !other.order) other.order = l.order;
+        });
+      });
+    });
+    project.childNumbersV21 = true;
+  }
   function loadProjects() {
     try {
       const raw = localStorage.getItem(PROJECTS_STORAGE_KEY);
       const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
+      const list = Array.isArray(parsed) ? parsed : [];
+      list.forEach(migrateProject);
+      return list;
     } catch (err) { console.warn('Could not load saved projects', err); return []; }
   }
   const projects = loadProjects();
   function persistProjects() {
     try {
       const safe = projects.map((project) => ({
-        title: project.title, desc: project.desc, date: project.date, saved: !!project.saved,
+        title: project.title, desc: project.desc, date: project.date, saved: !!project.saved, version: '2.1', childNumbersV21: !!project.childNumbersV21,
         tree: project.tree ? {
           nextId: project.tree.nextId,
           people: (project.tree.people || []).map(({ img, ...person }) => person)
@@ -1797,7 +1849,7 @@
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   }
 
-  async function shareProject(i) {
+  async function shareProject(i, showOnly) {
     const p = projects[i];
     const shareData = {
       format: 'abd-family-web-shared',
@@ -1817,6 +1869,7 @@
     }
 
     const link = location.origin + location.pathname + '#shared-data=' + encodeShareData(shareData);
+    if (showOnly) { showShareScreen(p.title, link); return; }
     await shareLink(link, p.title);
   }
 
@@ -1935,7 +1988,7 @@
     { code: 'ar', name: 'العربية' },
     { code: 'hi', name: 'हिन्दी' },
     { code: 'ja', name: '日本語' },
-    { code: 'zh', name: '中文 (Mandarin)' }
+    { code: 'zh', name: '中文 (普通话)' }
   ];
   const I18N = {
     en: { rel_Father: 'Father', rel_Mother: 'Mother', rel_Sibling: 'Sibling', rel_Friend: 'Friend', rel_Spouse: 'Spouse', rel_Child: 'Child', rel_Other: 'Other',
@@ -2158,6 +2211,17 @@
   function childrenOf(x) {
     return people().filter((q) => q.id !== x.id && parentsOf(q).some((pp) => pp.id === x.id));
   }
+  // A child's number under one parent is shown on the other parent's thread too (same child, same number)
+  function syncChildOrders(child) {
+    const ordered = child.links.find((l) => l.rel === 'Child' && l.order);
+    if (!ordered) return;
+    const par = personById(ordered.id);
+    if (!par) return;
+    const spouseIds = spousesOf(par).map((s) => s.id);
+    child.links.forEach((l) => {
+      if (l.rel === 'Child' && !l.order && spouseIds.includes(l.id)) l.order = ordered.order;
+    });
+  }
   // Run after a person is added or modified. Returns the people whose links changed.
   function autoSpouseChildren(x) {
     const changed = new Set();
@@ -2237,6 +2301,7 @@
     });
   }
 
+  let pendingChildLink = null;   // { parentId, order } chosen in the Child 1-10 popup
   function openPersonModal(isMe, personBeingEdited = null, onlyPerson = null, presetRel = null) {
     editingPersonId = personBeingEdited ? personBeingEdited.id : null;
     pendingIsMe = personBeingEdited ? !!personBeingEdited.isMe : isMe;
@@ -2273,6 +2338,7 @@
   }
 
   function closePersonModal() {
+    pendingChildLink = null;
     personModal.classList.add('hidden');
   }
 
@@ -2311,7 +2377,16 @@
     if (rows.some(r => r.querySelector('select').value === 'Other' && !r.querySelector('.rel-text').value.trim())) {
       pError.textContent = 'Describe the "Other" relation in the text box.'; return;
     }
-    const links = rows.map(r => ({ id:Number(r.querySelector('input[type=checkbox]').value), rel:r.querySelector('select').value === 'Other' ? r.querySelector('.rel-text').value.trim() : r.querySelector('select').value }));
+    const oldLinks = (editingPersonId !== null && personById(editingPersonId)) ? personById(editingPersonId).links : [];
+    const links = rows.map(r => {
+      const id = Number(r.querySelector('input[type=checkbox]').value);
+      const rel = r.querySelector('select').value === 'Other' ? r.querySelector('.rel-text').value.trim() : r.querySelector('select').value;
+      const link = { id, rel };
+      const kept = oldLinks.find(l => l.id === id && l.rel === rel && l.order);
+      if (kept) link.order = kept.order;
+      if (pendingChildLink && pendingChildLink.parentId === id && rel === 'Child') link.order = pendingChildLink.order;
+      return link;
+    });
     if (!first || !last) { pError.textContent = 'Please enter the first and last name.'; return; }
     if (!clan) { pError.textContent = 'Please type a clan name.'; return; }
     if (!gender) { pError.textContent = 'Please choose male or female.'; return; }
@@ -2330,8 +2405,10 @@
       editing.first = first; editing.last = last; editing.clan = clan;
       editing.gender = gender; editing.status = status; editing.dob = dob; editing.links = links;
       editing.localNames = collectLocalNames();
+      editing.clanLocalNames = collectClanLocal();
       const linksBefore = editing.links.length;
       const autoEdited = autoSpouseChildren(editing);
+      syncChildOrders(editing);
       const autoSelf = editing.links.length - linksBefore;
       if (pendingPhoto) editing.photo = pendingPhoto;
       if (pendingPhoto) { editing.img = null; const im = new Image(); im.onload = () => { editing.img = im; }; im.src = pendingPhoto; }
@@ -2347,11 +2424,12 @@
     }
 
     const pos = pendingIsMe ? {x:0,y:0} : layoutNew(links);
-    const person = { id:t.nextId++, first, last, clan, gender, status, dob, localNames: collectLocalNames(), photo:pendingPhoto, img:null, x:pos.x, y:pos.y, links, isMe:pendingIsMe };
+    const person = { id:t.nextId++, first, last, clan, gender, status, dob, localNames: collectLocalNames(), clanLocalNames: collectClanLocal(), photo:pendingPhoto, img:null, x:pos.x, y:pos.y, links, isMe:pendingIsMe };
     if (pendingPhoto) { const im = new Image(); im.onload = () => { person.img = im; }; im.src = pendingPhoto; }
     t.people.push(person);
     const before = person.links.length;
     const autoChanged = autoSpouseChildren(person);
+    syncChildOrders(person);
     const autoAdded = (person.links.length - before) + autoChanged.length;
     const reg = registerClan(clan, person, treeProject);
     person.clan = reg.clan.name;
@@ -2480,12 +2558,34 @@
       b.addEventListener('click', () => {
         relPickModal.classList.add('hidden');
         personCard.classList.remove('show');
+        if (c.rel === 'Child') { openChildOrder(p); return; }
         openPersonModal(false, null, p, c.rel);
       });
       list.append(b);
     });
     relPickModal.classList.remove('hidden');
   }
+  // Child: first pick which child number this is for the parent, then the add form opens
+  const childOrderModal = document.getElementById('childOrderModal');
+  function openChildOrder(p) {
+    document.getElementById('childOrderTitle').textContent = 'Which child of ' + p.first + '?';
+    const grid = document.getElementById('childOrderList');
+    grid.textContent = '';
+    for (let n = 1; n <= 10; n++) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'white-clay';
+      b.textContent = 'Child ' + n;
+      b.addEventListener('click', () => {
+        childOrderModal.classList.add('hidden');
+        pendingChildLink = { parentId: p.id, order: n };
+        openPersonModal(false, null, p, 'Child');
+      });
+      grid.append(b);
+    }
+    childOrderModal.classList.remove('hidden');
+  }
+  document.getElementById('childOrderClose').addEventListener('click', () => childOrderModal.classList.add('hidden'));
   document.getElementById('relPickClose').addEventListener('click', () => relPickModal.classList.add('hidden'));
   relPickModal.addEventListener('click', (e) => { if (e.target === relPickModal) relPickModal.classList.add('hidden'); });
   document.getElementById('pcAddRelative').addEventListener('click', () => {
@@ -2496,9 +2596,11 @@
   document.getElementById('addPersonBtn').addEventListener('click', () => openPersonModal(people().length === 0));
   document.getElementById('treeBackBtn').addEventListener('click', closeTree);
   document.getElementById('arrangeBtn').addEventListener('click', arrangeTree);
+  document.getElementById('restoreLayoutBtn').addEventListener('click', restoreTreeLayout);
 
   function openTree(p) {
     treeProject = p;
+    setRestoreUI();
     restoreProjectImages(p);
     if (!p.tree) p.tree = { people: [], nextId: 1 };
     histReset(); exitFocus();
@@ -2750,7 +2852,8 @@
         const q = byId.get(link.id);
         if (!q) continue;
         const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
-        const tw = tctx.measureText(TR_REL(link.rel)).width;
+        const threadLabel = TR_REL(link.rel) + (link.rel === 'Child' && link.order ? ' ' + link.order : '');
+        const tw = tctx.measureText(threadLabel).width;
         tctx.fillStyle = 'rgba(0,0,0,0.9)';
         tctx.strokeStyle = 'rgba(255,255,255,0.5)';
         tctx.lineWidth = 1 * PX;
@@ -2759,7 +2862,7 @@
         tctx.fill();
         tctx.stroke();
         tctx.fillStyle = '#ffffff';
-        tctx.fillText(TR_REL(link.rel), mx, my + 1 * PX);
+        tctx.fillText(threadLabel, mx, my + 1 * PX);
       }
     }
 
@@ -2840,6 +2943,8 @@
       isNew = true;
     }
     c.members.push({ person, pr, project: pr.title });
+    // Clan names typed for each language stay with the people who belong to the clan
+    if (person && person.clanLocalNames) c.localNames = Object.assign({}, c.localNames || {}, person.clanLocalNames);
     return { clan: c, isNew };
   }
 
@@ -2864,6 +2969,7 @@
       const img = document.createElement('img');
       img.src = p.photo;
       img.alt = '';
+      img.decoding = 'async';
       thumb.append(img);
     } else {
       thumb.textContent = (p.first[0] || '') + (p.last[0] || '');
@@ -3080,15 +3186,37 @@
     tv.camY = (minY + maxY) / 2 - 30 / tv.zoom;
   }
 
+  // Arrange sorts people by generation and remembers where they were;
+  // the Restore button puts that remembered layout back
+  let arrangeSaved = null;   // Map of person id -> {x, y} before the last arrange
+  let arrangeOwner = null;   // the tree project that layout belongs to
+  function setRestoreUI() {
+    const btn = document.getElementById('restoreLayoutBtn');
+    const arranged = !!(arrangeSaved && arrangeOwner === treeProject);
+    btn.disabled = !arranged;
+    document.getElementById('arrangeBtn').disabled = arranged;
+  }
   function arrangeTree() {
     const list = people();
     if (list.length < 2) { toast('Add more people to arrange them'); return; }
+    arrangeOwner = treeProject;
+    arrangeSaved = new Map(list.map((p) => [p.id, { x: p.x, y: p.y }]));
     const L = layoutGenerations(list);
     const cx = (L.minX + L.maxX) / 2;
     list.forEach((p) => { const q = L.pos.get(p.id); if (q) { p.x = q.x - cx; p.y = q.y - L.minY; } });
     persistProjects(); histPush();
     fitTreeView();
+    setRestoreUI();
     toast('Arranged by generation: oldest at the top');
+  }
+  function restoreTreeLayout() {
+    if (!arrangeSaved || arrangeOwner !== treeProject) { toast('Arrange the tree first'); return; }
+    people().forEach((p) => { const s = arrangeSaved.get(p.id); if (s) { p.x = s.x; p.y = s.y; } });
+    arrangeSaved = null; arrangeOwner = null;
+    persistProjects(); histPush();
+    fitTreeView();
+    setRestoreUI();
+    toast('Back to your previous layout');
   }
 
   function showGroupView(kind, key) {
@@ -3120,7 +3248,18 @@
       gList.append(em);
     }
     items = sortByGeneration(items);
-    items.forEach((it) => gList.append(memberRow(it.person, it.pr, it.project + ' · Generation ' + (it.gen + 1))));
+    // Members grouped under a heading per generation, oldest first
+    let lastGen = null;
+    items.forEach((it) => {
+      if (it.gen !== lastGen) {
+        lastGen = it.gen;
+        const h = document.createElement('p');
+        h.className = 'lbl gen-head';
+        h.textContent = 'Generation ' + (it.gen + 1);
+        gList.append(h);
+      }
+      gList.append(memberRow(it.person, it.pr, it.project));
+    });
     if (related.length) {
       const h = document.createElement('p');
       h.className = 'lbl';
@@ -3228,6 +3367,7 @@
   const importInput = document.getElementById('importInput');
   const chosenName = document.getElementById('chosenName');
   let pendingImport = null;
+  let settingsFromProfile = false;   // true when Settings was opened from the profile page
 
   // null = all projects (gear icon); a project object = that project only (three-dot menu)
   let settingsProject = null;
@@ -3252,6 +3392,12 @@
 
   function backFromSettings() {
     settingsScreen.classList.add('hidden');
+    if (settingsFromProfile) {
+      settingsFromProfile = false;
+      homeScreen.classList.remove('hidden');
+      setProfileOpen(true);
+      return;
+    }
     projectScreen.classList.remove('hidden');
     renderProjects();
   }
@@ -3556,11 +3702,112 @@
   const langModal = document.getElementById('langModal');
   const langList = document.getElementById('langList');
 
+  // Interface wording per language. Names, clans and anything typed by people are never translated.
+  const TRANS = {
+    ja: {
+      'About us': '私たちについて', 'Help': 'ヘルプ', 'Projects': 'プロジェクト', 'Search clan or family': '氏族または家族を検索', 'Profile': 'プロフィール',
+      'Zoom in': '拡大', 'Zoom out': '縮小', 'Reset': 'リセット', 'Full screen view': '全画面表示', 'Back': '戻る', 'Close': '閉じる', 'Next': '次へ',
+      '+ Add new project': '+ 新しいプロジェクトを追加', 'Settings': '設定', 'No projects yet. Tap "+ Add new project" to start.': 'まだプロジェクトがありません。「+ 新しいプロジェクトを追加」をタップして始めましょう。',
+      'Drag to explore the galaxy. Ctrl + scroll or pinch to zoom between planets and deep space. Tap a planet or object to visit it. Tap a crest to open its family.': '銀河をドラッグして探索できます。Ctrl + スクロールまたはピンチで惑星と宇宙空間の間を拡大縮小できます。惑星や物体をタップして訪れ、紋章をタップするとその家族が開きます。',
+      'Family tree': '家系図', 'Undo': '元に戻す', 'Redo': 'やり直す', 'Language': '言語', 'Arrange by generation': '世代順に整列', 'Restore previous layout': '以前のレイアウトに戻す',
+      '+ Add person': '+ 人物を追加', 'Add relative': '親族を追加', 'Modify': '編集', 'Delete': '削除',
+      'Guest': 'ゲスト', 'Not linked to a Google account': 'Googleアカウントに連携されていません', 'Help & Support': 'ヘルプとサポート', 'Share project': 'プロジェクトを共有', 'Clans': '氏族',
+      'Copy link': 'リンクをコピー', 'Anyone with this link can view the project. It is read-only.': 'このリンクを持つ人は誰でもプロジェクトを閲覧できます。閲覧専用です。'
+    },
+    zh: {
+      'About us': '关于我们', 'Help': '帮助', 'Projects': '项目', 'Search clan or family': '搜索宗族或家庭', 'Profile': '个人资料',
+      'Zoom in': '放大', 'Zoom out': '缩小', 'Reset': '重置', 'Full screen view': '全屏视图', 'Back': '返回', 'Close': '关闭', 'Next': '下一步',
+      '+ Add new project': '+ 新建项目', 'Settings': '设置', 'No projects yet. Tap "+ Add new project" to start.': '还没有项目。点击“+ 新建项目”开始。',
+      'Drag to explore the galaxy. Ctrl + scroll or pinch to zoom between planets and deep space. Tap a planet or object to visit it. Tap a crest to open its family.': '拖动即可探索星系。按住 Ctrl 滚动或双指捏合，可在行星与深空之间缩放。点击行星或天体即可前往，点击徽记即可打开其家族。',
+      'Family tree': '家谱树', 'Undo': '撤销', 'Redo': '重做', 'Language': '语言', 'Arrange by generation': '按代排列', 'Restore previous layout': '恢复上一布局',
+      '+ Add person': '+ 添加成员', 'Add relative': '添加亲属', 'Modify': '修改', 'Delete': '删除',
+      'Guest': '访客', 'Not linked to a Google account': '未关联 Google 账户', 'Help & Support': '帮助与支持', 'Share project': '分享项目', 'Clans': '宗族',
+      'Copy link': '复制链接', 'Anyone with this link can view the project. It is read-only.': '任何拥有此链接的人都可以查看该项目，且仅供阅读。'
+    },
+    ta: {
+      'About us': 'எங்களைப் பற்றி', 'Help': 'உதவி', 'Projects': 'திட்டங்கள்', 'Search clan or family': 'குலம் அல்லது குடும்பம் தேடுக', 'Profile': 'சுயவிவரம்',
+      'Zoom in': 'பெரிதாக்கு', 'Zoom out': 'சிறிதாக்கு', 'Reset': 'மீட்டமை', 'Full screen view': 'முழுத்திரை காட்சி', 'Back': 'பின்செல்', 'Close': 'மூடு', 'Next': 'அடுத்தது',
+      '+ Add new project': '+ புதிய திட்டம் சேர்', 'Settings': 'அமைப்புகள்', 'No projects yet. Tap "+ Add new project" to start.': 'இன்னும் திட்டங்கள் இல்லை. தொடங்க "+ புதிய திட்டம் சேர்" என்பதைத் தொடவும்.',
+      'Drag to explore the galaxy. Ctrl + scroll or pinch to zoom between planets and deep space. Tap a planet or object to visit it. Tap a crest to open its family.': 'விண்மீனை ஆராய இழுக்கவும். கோள்களுக்கும் ஆழ்வெளிக்கும் இடையே பெரிதாக்க Ctrl + ஸ்குரோல் அல்லது பிஞ்ச் செய்யவும். ஒரு கோள் அல்லது பொருளைத் தொட்டுப் பார்க்கவும். ஒரு சின்னத்தைத் தொட்டு அதன் குடும்பத்தைத் திறக்கவும்.',
+      'Family tree': 'குடும்ப மரம்', 'Undo': 'செயல்தவிர்', 'Redo': 'மீண்டும் செய்', 'Language': 'மொழி', 'Arrange by generation': 'தலைமுறை வாரியாக அமை', 'Restore previous layout': 'முந்தைய அமைப்பை மீட்டெடு',
+      '+ Add person': '+ நபரைச் சேர்', 'Add relative': 'உறவினரைச் சேர்', 'Modify': 'திருத்து', 'Delete': 'நீக்கு',
+      'Guest': 'விருந்தினர்', 'Not linked to a Google account': 'Google கணக்குடன் இணைக்கப்படவில்லை', 'Help & Support': 'உதவி & ஆதரவு', 'Share project': 'திட்டத்தைப் பகிர்', 'Clans': 'குலங்கள்',
+      'Copy link': 'இணைப்பை நகலெடு', 'Anyone with this link can view the project. It is read-only.': 'இந்த இணைப்பு உள்ளவர்கள் திட்டத்தைப் பார்க்கலாம். இது படிக்க மட்டுமே.'
+    },
+    ml: {
+      'About us': 'ഞങ്ങളെക്കുറിച്ച്', 'Help': 'സഹായം', 'Projects': 'പ്രോജക്റ്റുകൾ', 'Search clan or family': 'കുലമോ കുടുംബമോ തിരയുക', 'Profile': 'പ്രൊഫൈൽ',
+      'Zoom in': 'സൂം ഇൻ', 'Zoom out': 'സൂം ഔട്ട്', 'Reset': 'പുനഃക്രമീകരിക്കുക', 'Full screen view': 'ഫുൾ സ്ക്രീൻ കാഴ്ച', 'Back': 'തിരികെ', 'Close': 'അടയ്ക്കുക', 'Next': 'അടുത്തത്',
+      '+ Add new project': '+ പുതിയ പ്രോജക്റ്റ് ചേർക്കുക', 'Settings': 'ക്രമീകരണങ്ങൾ', 'No projects yet. Tap "+ Add new project" to start.': 'ഇതുവരെ പ്രോജക്റ്റുകളൊന്നുമില്ല. തുടങ്ങാൻ "+ പുതിയ പ്രോജക്റ്റ് ചേർക്കുക" ടാപ്പ് ചെയ്യുക.',
+      'Drag to explore the galaxy. Ctrl + scroll or pinch to zoom between planets and deep space. Tap a planet or object to visit it. Tap a crest to open its family.': 'ഗാലക്സി പര്യവേക്ഷണം ചെയ്യാൻ വലിച്ചുനീക്കുക. ഗ്രഹങ്ങൾക്കും ആഴമുള്ള ബഹിരാകാശത്തിനും ഇടയിൽ സൂം ചെയ്യാൻ Ctrl + സ്ക്രോൾ അല്ലെങ്കിൽ പിഞ്ച് ചെയ്യുക. ഒരു ഗ്രഹമോ വസ്തുവോ ടാപ്പ് ചെയ്യുക. ഒരു ചിഹ്നം ടാപ്പ് ചെയ്ത് അതിന്റെ കുടുംബം തുറക്കുക.',
+      'Family tree': 'കുടുംബവൃക്ഷം', 'Undo': 'പഴയപടിയാക്കുക', 'Redo': 'വീണ്ടും ചെയ്യുക', 'Language': 'ഭാഷ', 'Arrange by generation': 'തലമുറ അനുസരിച്ച് ക്രമീകരിക്കുക', 'Restore previous layout': 'മുൻപത്തെ ലേഔട്ട് തിരികെ കൊണ്ടുവരിക',
+      '+ Add person': '+ ആളെ ചേർക്കുക', 'Add relative': 'ബന്ധുവിനെ ചേർക്കുക', 'Modify': 'മാറ്റുക', 'Delete': 'ഇല്ലാതാക്കുക',
+      'Guest': 'അതിഥി', 'Not linked to a Google account': 'Google അക്കൗണ്ടുമായി ബന്ധിപ്പിച്ചിട്ടില്ല', 'Help & Support': 'സഹായവും പിന്തുണയും', 'Share project': 'പ്രോജക്റ്റ് പങ്കിടുക', 'Clans': 'കുലങ്ങൾ',
+      'Copy link': 'ലിങ്ക് പകർത്തുക', 'Anyone with this link can view the project. It is read-only.': 'ഈ ലിങ്ക് ഉള്ള ആർക്കും പ്രോജക്റ്റ് കാണാം. ഇത് വായിക്കാൻ മാത്രമുള്ളതാണ്.'
+    },
+    hi: {
+      'About us': 'हमारे बारे में', 'Help': 'सहायता', 'Projects': 'प्रोजेक्ट्स', 'Search clan or family': 'कुल या परिवार खोजें', 'Profile': 'प्रोफ़ाइल',
+      'Zoom in': 'ज़ूम इन', 'Zoom out': 'ज़ूम आउट', 'Reset': 'रीसेट', 'Full screen view': 'पूर्ण स्क्रीन दृश्य', 'Back': 'वापस', 'Close': 'बंद करें', 'Next': 'अगला',
+      '+ Add new project': '+ नया प्रोजेक्ट जोड़ें', 'Settings': 'सेटिंग्स', 'No projects yet. Tap "+ Add new project" to start.': 'अभी कोई प्रोजेक्ट नहीं है। शुरू करने के लिए "+ नया प्रोजेक्ट जोड़ें" दबाएँ।',
+      'Drag to explore the galaxy. Ctrl + scroll or pinch to zoom between planets and deep space. Tap a planet or object to visit it. Tap a crest to open its family.': 'आकाशगंगा देखने के लिए खींचें। ग्रहों और गहरे अंतरिक्ष के बीच ज़ूम करने के लिए Ctrl + स्क्रोल या पिंच करें। किसी ग्रह या वस्तु पर जाने के लिए उसे दबाएँ। उसका परिवार खोलने के लिए किसी प्रतीक को दबाएँ।',
+      'Family tree': 'पारिवारिक वृक्ष', 'Undo': 'पूर्ववत करें', 'Redo': 'फिर से करें', 'Language': 'भाषा', 'Arrange by generation': 'पीढ़ी के अनुसार व्यवस्थित करें', 'Restore previous layout': 'पिछला लेआउट वापस लाएँ',
+      '+ Add person': '+ व्यक्ति जोड़ें', 'Add relative': 'रिश्तेदार जोड़ें', 'Modify': 'बदलें', 'Delete': 'हटाएँ',
+      'Guest': 'अतिथि', 'Not linked to a Google account': 'Google खाते से जुड़ा नहीं है', 'Help & Support': 'सहायता और समर्थन', 'Share project': 'प्रोजेक्ट साझा करें', 'Clans': 'कुल',
+      'Copy link': 'लिंक कॉपी करें', 'Anyone with this link can view the project. It is read-only.': 'इस लिंक वाला कोई भी प्रोजेक्ट देख सकता है। यह केवल-पढ़ने के लिए है।'
+    },
+    ar: {
+      'About us': 'من نحن', 'Help': 'مساعدة', 'Projects': 'المشاريع', 'Search clan or family': 'ابحث عن عشيرة أو عائلة', 'Profile': 'الملف الشخصي',
+      'Zoom in': 'تكبير', 'Zoom out': 'تصغير', 'Reset': 'إعادة ضبط', 'Full screen view': 'عرض ملء الشاشة', 'Back': 'رجوع', 'Close': 'إغلاق', 'Next': 'التالي',
+      '+ Add new project': '+ إضافة مشروع جديد', 'Settings': 'الإعدادات', 'No projects yet. Tap "+ Add new project" to start.': 'لا توجد مشاريع بعد. اضغط "+ إضافة مشروع جديد" للبدء.',
+      'Drag to explore the galaxy. Ctrl + scroll or pinch to zoom between planets and deep space. Tap a planet or object to visit it. Tap a crest to open its family.': 'اسحب لاستكشاف المجرة. استخدم Ctrl + التمرير أو القرص للتكبير بين الكواكب والفضاء العميق. اضغط على كوكب أو جسم لزيارته. اضغط على شعار لفتح عائلته.',
+      'Family tree': 'شجرة العائلة', 'Undo': 'تراجع', 'Redo': 'إعادة', 'Language': 'اللغة', 'Arrange by generation': 'ترتيب حسب الجيل', 'Restore previous layout': 'استعادة التخطيط السابق',
+      '+ Add person': '+ إضافة شخص', 'Add relative': 'إضافة قريب', 'Modify': 'تعديل', 'Delete': 'حذف',
+      'Guest': 'ضيف', 'Not linked to a Google account': 'غير مرتبط بحساب Google', 'Help & Support': 'المساعدة والدعم', 'Share project': 'مشاركة المشروع', 'Clans': 'العشائر',
+      'Copy link': 'نسخ الرابط', 'Anyone with this link can view the project. It is read-only.': 'يمكن لأي شخص لديه هذا الرابط عرض المشروع. وهو للقراءة فقط.'
+    }
+  };
+
+  let applyingI18n = false;
+  let i18nWatching = false;
+  // Replace English interface text with the chosen language; anything not in the list is left as typed
+  function translateUI() {
+    const map = TRANS[lang] || {};
+    applyingI18n = true;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const texts = [];
+    while (walker.nextNode()) texts.push(walker.currentNode);
+    texts.forEach((n) => {
+      const p = n.parentNode;
+      if (!p || /^(SCRIPT|STYLE|TEXTAREA|INPUT|OPTION)$/.test(p.nodeName)) return;
+      if (n._en === undefined) { if (!n.nodeValue.trim()) return; n._en = n.nodeValue; }
+      const key = n._en.trim();
+      const next = map[key] ? n._en.replace(key, map[key]) : n._en;
+      if (n.nodeValue !== next) n.nodeValue = next;
+    });
+    document.querySelectorAll('[title],[aria-label],[placeholder]').forEach((el) => {
+      ['title', 'aria-label', 'placeholder'].forEach((attr) => {
+        if (!el.hasAttribute(attr)) return;
+        const store = '_en_' + attr;
+        if (el[store] === undefined) el[store] = el.getAttribute(attr);
+        const key = el[store].trim();
+        const next = map[key] || el[store];
+        if (el.getAttribute(attr) !== next) el.setAttribute(attr, next);
+      });
+    });
+    applyingI18n = false;
+    if (!i18nWatching) {
+      i18nWatching = true;
+      new MutationObserver(() => {
+        if (!applyingI18n && lang !== 'en') requestAnimationFrame(translateUI);
+      }).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['title', 'aria-label', 'placeholder'] });
+    }
+  }
+
   function setLang(code) {
     lang = code;
     document.documentElement.lang = code;
     document.documentElement.dir = code === 'ar' ? 'rtl' : 'ltr';
     applyTreeLabels();
+    translateUI();
   }
 
   function openLangModal() {
@@ -3704,7 +3951,18 @@
       em.textContent = 'No members yet.';
       gList.append(em);
     }
-    sorted.forEach((it) => gList.append(memberRow(it.person, it.pr, it.project + ' · Generation ' + (it.gen + 1))));
+    // Members grouped under a heading per generation, oldest first
+    let lastGen = null;
+    sorted.forEach((it) => {
+      if (it.gen !== lastGen) {
+        lastGen = it.gen;
+        const h = document.createElement('p');
+        h.className = 'lbl gen-head';
+        h.textContent = 'Generation ' + (it.gen + 1);
+        gList.append(h);
+      }
+      gList.append(memberRow(it.person, it.pr, it.project));
+    });
     groupModal.classList.remove('hidden');
   }
 
@@ -3954,7 +4212,7 @@
     if (pg.touches.size < 2) pg.pinch = 0;
     if (pg.touches.size === 0) pg.drag = null;
     if (!wasTap) return;
-    let best = null, bestD = 28;
+    let best = null, bestD = 36;   // generous tap area around each crest, so one tap is enough
     pg.hits.forEach((h) => {
       const d = Math.hypot(h.x - e.clientX, h.y - e.clientY);
       if (d < bestD) { bestD = d; best = h; }
@@ -4167,7 +4425,146 @@
   }
   document.getElementById('aboutBtn').addEventListener('click', () => showAbout('home'));
   document.getElementById('aboutBtnProjects').addEventListener('click', () => showAbout('projects'));
-  document.getElementById('profileBtn').addEventListener('click', () => toast('Profile is coming soon'));
+  const profilePage = document.getElementById('profilePage');
+  const profileScrim = document.getElementById('profileScrim');
+  function setProfileOpen(open) {
+    profilePage.classList.toggle('open', open);
+    profileScrim.classList.toggle('open', open);
+  }
+  document.getElementById('profileBtn').addEventListener('click', () => { updateProfileCounts(); setProfileOpen(true); });
+  profileScrim.addEventListener('click', () => setProfileOpen(false));
+  document.getElementById('profileHelp').addEventListener('click', () => { setProfileOpen(false); openHelp(); returnToProfileWhenClosed(helpModal); });
+  document.getElementById('profileAbout').addEventListener('click', () => { setProfileOpen(false); showAbout('home'); returnToProfileWhenClosed(document.getElementById('aboutScreen')); });
+  document.getElementById('profileLanguage').addEventListener('click', () => { setProfileOpen(false); openLangModal(); returnToProfileWhenClosed(langModal); });
+  // Share page: shows the link for one project
+  const shareScreen = document.getElementById('shareScreen');
+  const shareLinkBox = document.getElementById('shareLinkBox');
+  let shareReturnHome = true;
+  function showShareScreen(title, link) {
+    shareReturnHome = !homeScreen.classList.contains('hidden');
+    homeScreen.classList.add('hidden');
+    projectScreen.classList.add('hidden');
+    document.getElementById('shareProjName').textContent = title;
+    shareLinkBox.value = link;
+    shareScreen.classList.remove('hidden');
+    shareScreen.scrollTop = 0;
+  }
+  document.getElementById('shareBackBtn').addEventListener('click', () => {
+    shareScreen.classList.add('hidden');
+    if (shareReturnHome) homeScreen.classList.remove('hidden');
+    else { projectScreen.classList.remove('hidden'); renderProjects(); }
+  });
+  document.getElementById('shareCopyBtn').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(shareLinkBox.value); toast('Link copied'); }
+    catch (err) { shareLinkBox.select(); toast('Select the link and copy it'); }
+  });
+  document.getElementById('shareNativeBtn').addEventListener('click', () =>
+    shareLink(shareLinkBox.value, document.getElementById('shareProjName').textContent));
+  const profileSharePage = document.getElementById('profileSharePage');
+  const profileShareItems = document.getElementById('profileShareItems');
+  function buildShareLink(p) {
+    const shareData = {
+      format: 'abd-family-web-shared', version: 1, title: p.title, description: p.desc || '',
+      people: (p.tree && Array.isArray(p.tree.people) ? p.tree.people : []).map((q) => ({
+        id: q.id, first: q.first || '', last: q.last || '', clan: q.clan || '',
+        gender: q.gender || '', status: q.status || 'living', isMe: !!q.isMe,
+        links: (q.links || []).map((l) => ({ id: l.id, rel: l.rel }))
+      }))
+    };
+    return location.origin + location.pathname + '#shared-data=' + encodeShareData(shareData);
+  }
+  // Share page: one link per saved project, shown on its own page
+  function openProfileSharePage() {
+    homeScreen.classList.add('hidden');
+    profileShareItems.textContent = '';
+    const canLink = location.protocol === 'https:' || location.protocol === 'http:' || location.hostname === 'localhost';
+    if (!projects.length) {
+      const em = document.createElement('p');
+      em.textContent = 'No projects to share yet.';
+      profileShareItems.append(em);
+    }
+    if (!canLink) {
+      const em = document.createElement('p');
+      em.textContent = 'Host this website online first to create a public HTTPS link.';
+      profileShareItems.append(em);
+    }
+    if (canLink) projects.forEach((p) => {
+      const card = document.createElement('div');
+      card.style.cssText = 'background:linear-gradient(160deg,#1a1d1e 0%,#0d0f10 70%);border-radius:30px;padding:20px;margin-bottom:18px;box-shadow:0 0 0 1px rgba(60,255,122,.12);';
+      const name = document.createElement('p');
+      name.textContent = p.title;
+      name.style.cssText = 'font-family:Audiowide,Sora,sans-serif;font-size:1.05rem;margin:0 0 12px;';
+      const box = document.createElement('textarea');
+      box.className = 'input';
+      box.readOnly = true;
+      box.rows = 3;
+      box.style.width = '100%';
+      box.value = buildShareLink(p);
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'white-clay dark';
+      copy.style.marginTop = '12px';
+      copy.textContent = 'Copy link';
+      copy.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(box.value); toast('Link copied'); }
+        catch (err) { box.select(); toast('Select the link and copy it'); }
+      });
+      card.append(name, box, copy);
+      profileShareItems.append(card);
+    });
+    profileSharePage.classList.remove('hidden');
+    profileSharePage.scrollTop = 0;
+  }
+  document.getElementById('profileShareBack').addEventListener('click', () => {
+    profileSharePage.classList.add('hidden');
+    homeScreen.classList.remove('hidden');
+  });
+  document.getElementById('profileShare').addEventListener('click', () => { setProfileOpen(false); openProfileSharePage(); returnToProfileWhenClosed(profileSharePage); });
+  // When a page opened from the profile closes (Back), the profile opens again
+  function returnToProfileWhenClosed(node) {
+    if (!node) return;
+    const mo = new MutationObserver(() => {
+      if (node.classList.contains('hidden')) { mo.disconnect(); setProfileOpen(true); }
+    });
+    mo.observe(node, { attributes: true, attributeFilter: ['class'] });
+  }
+  // Counts for the Projects and Clans rows
+  function updateProfileCounts() {
+    rebuildClanRegistry();
+    document.getElementById('profileProjectCount').textContent = projects.length;
+    document.getElementById('profileClanCount').textContent = clanRegistry.length;
+  }
+  // Projects row opens the projects page
+  document.getElementById('profileProjectsRow').addEventListener('click', () => {
+    setProfileOpen(false);
+    treeScreen.classList.add('hidden');
+    homeScreen.classList.add('hidden');
+    projectScreen.classList.remove('hidden');
+    renderProjects();
+  });
+  // Clans row opens the clan view: crests with details on tap
+  document.getElementById('profileClansRow').addEventListener('click', () => {
+    setProfileOpen(false);
+    document.getElementById('clanViewBtn').click();
+  });
+  // Log out is shown only when a Google account is linked (guest mode hides it)
+  let googleAccount = null;
+  const profileLogoutBtn = document.getElementById('profileLogout');
+  function renderAccount() {
+    profileLogoutBtn.style.display = googleAccount ? 'flex' : 'none';
+  }
+  profileLogoutBtn.addEventListener('click', () => {
+    googleAccount = null;
+    renderAccount();
+    setProfileOpen(false);
+    setProfileOpen(true);
+  });
+  renderAccount();
+  document.getElementById('profileSettings').addEventListener('click', () => {
+    setProfileOpen(false);
+    settingsFromProfile = true;
+    showSettings(null);
+  });
   document.getElementById('aboutBackBtn').addEventListener('click', backFromAbout);
 
   /* ----- Rename project ----- */
@@ -4273,7 +4670,7 @@
   function inFocus() { return document.body.classList.contains('focus-mode'); }
   function fsUI() {
     const on = inFocus();
-    ['fsHome', 'fsTree'].forEach((id) => {
+    ['fsHome', 'fsTree', 'fsPg'].forEach((id) => {
       const b = document.getElementById(id);
       b.setAttribute('aria-label', on ? 'Exit full screen view' : 'Full screen view');
       b.title = on ? 'Exit full screen view' : 'Full screen view';
@@ -4297,7 +4694,7 @@
       else if (document.webkitFullscreenElement && document.webkitExitFullscreen) document.webkitExitFullscreen();
     } catch (err) {}
   }
-  ['fsHome', 'fsTree'].forEach((id) => document.getElementById(id).addEventListener('click', () => { if (inFocus()) exitFocus(); else enterFocus(); }));
+  ['fsHome', 'fsTree', 'fsPg'].forEach((id) => document.getElementById(id).addEventListener('click', () => { if (inFocus()) exitFocus(); else enterFocus(); }));
   const onFsChange = () => { if (!document.fullscreenElement && !document.webkitFullscreenElement && inFocus()) exitFocus(); };
   document.addEventListener('fullscreenchange', onFsChange);
   document.addEventListener('webkitfullscreenchange', onFsChange);
@@ -4438,6 +4835,117 @@
   openSharedFromHash();
 })();
 
+/* ----- Back navigation: phone back gesture, Android back button, browser back and in-app Back buttons ----- */
+(() => {
+  const el = (id) => document.getElementById(id);
+  const press = (id) => { const b = el(id); if (b) b.click(); };
+  const shown = (id) => () => !el(id).classList.contains('hidden');
+
+  // Every screen and popup that sits on top of the home page, and how it closes
+  const layers = [
+    { node: el('helpModal'), open: shown('helpModal'), close: () => press('hpClose') },
+    { node: el('groupModal'), open: shown('groupModal'), close: () => press('gClose') },
+    { node: el('personModal'), open: shown('personModal'), close: () => press('pCancel') },
+    { node: el('langModal'), open: shown('langModal'), close: () => press('langClose') },
+    { node: el('relPickModal'), open: shown('relPickModal'), close: () => press('relPickClose') },
+    { node: el('childOrderModal'), open: shown('childOrderModal'), close: () => press('childOrderClose') },
+    { node: el('confirmModal'), open: shown('confirmModal'), close: () => press('confirmNo') },
+    { node: el('renameModal'), open: shown('renameModal'), close: () => press('renCancel') },
+    { node: el('projectModal'), open: shown('projectModal'), close: () => press('cancelProjectBtn') },
+    { node: el('personCard'), open: () => el('personCard').classList.contains('show'), close: () => press('pcClose') },
+    { node: el('pgScreen'), open: shown('pgScreen'), close: () => press('pgBackBtn') },
+    { node: el('treeScreen'), open: shown('treeScreen'), close: () => press('treeBackBtn') },
+    { node: el('settingsScreen'), open: shown('settingsScreen'), close: () => press('settingsBackBtn') },
+    { node: el('sharedScreen'), open: shown('sharedScreen'), close: () => press('sharedBackBtn') },
+    { node: el('aboutScreen'), open: shown('aboutScreen'), close: () => press('aboutBackBtn') },
+    { node: el('projectScreen'), open: shown('projectScreen'), close: () => press('backBtn') },
+  ];
+
+  const stack = [];          // open layers, oldest first
+  let hasSentinel = false;   // true while one extra history entry stands for "something is open"
+  let pendingPops = 0;       // history moves we made ourselves, to ignore their popstate
+
+  // Keep the history in step with what is open on screen
+  function sync() {
+    const openNow = layers.filter((L) => L.open());
+    for (let i = stack.length - 1; i >= 0; i--) {
+      if (!openNow.includes(stack[i])) stack.splice(i, 1);
+    }
+    for (const L of openNow) {
+      if (!stack.includes(L)) stack.push(L);
+    }
+    if (stack.length && !hasSentinel) {
+      history.pushState({ layers: stack.length }, '');
+      hasSentinel = true;
+    } else if (!stack.length && hasSentinel) {
+      hasSentinel = false;
+      pendingPops++;
+      history.back();
+    }
+  }
+
+  // A Back gesture or button press closes the top-most open layer
+  window.addEventListener('popstate', () => {
+    if (pendingPops > 0) { pendingPops--; return; }
+    hasSentinel = false;
+    const top = stack.pop();
+    if (top) top.close();
+    sync();
+  });
+
+  // Any change to what is shown (opening or closing a screen or popup) updates the history
+  new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ['class'], subtree: true });
+
+  // Swipe right from the left edge: the top page follows your finger, then slides away or springs back
+  const EASE = 'transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)';
+  let swipe = null;
+  const finishSwipe = (node, slideOut) => {
+    node.style.transition = EASE;
+    node.style.transform = slideOut ? 'translate3d(100%, 0, 0)' : 'translate3d(0, 0, 0)';
+    setTimeout(() => {
+      node.style.transition = '';
+      node.style.transform = '';
+      if (slideOut) {
+        const top = stack.pop();
+        if (top) top.close();
+      }
+      sync();
+    }, 220);
+  };
+  window.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    if (e.touches.length !== 1 || t.clientX > 32 || !stack.length) { swipe = null; return; }
+    const top = stack[stack.length - 1];
+    swipe = { x: t.clientX, y: t.clientY, t: Date.now(), lock: null, dx: 0, node: top.node };
+  }, { passive: true });
+  window.addEventListener('touchmove', (e) => {
+    if (!swipe || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+    if (swipe.lock === null && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) swipe.lock = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+    if (swipe.lock !== 'h' || !swipe.node) return;
+    swipe.dx = Math.max(0, dx);
+    swipe.node.style.transition = 'none';
+    swipe.node.style.transform = 'translate3d(' + swipe.dx + 'px, 0, 0)';
+  }, { passive: true });
+  window.addEventListener('touchcancel', () => {
+    if (swipe && swipe.node && swipe.lock === 'h') finishSwipe(swipe.node, false);
+    swipe = null;
+  }, { passive: true });
+  window.addEventListener('touchend', (e) => {
+    if (!swipe) return;
+    const t = e.changedTouches[0];
+    const dx = swipe.lock === 'h' ? swipe.dx : 0, dt = Date.now() - swipe.t;
+    const node = swipe.node, wasHorizontal = swipe.lock === 'h';
+    swipe = null;
+    if (!wasHorizontal || !node) return;
+    const go = stack.length && (dx > window.innerWidth * 0.35 || (dx > 50 && dt < 250));
+    finishSwipe(node, !!go);
+  }, { passive: true });
+
+  sync();
+})();
+
 (function introGlobe() {
     const intro = document.getElementById('introScreen');
     const content = document.getElementById('introContent');
@@ -4446,6 +4954,10 @@
     const TAU = Math.PI * 2;
     if (/^#shared-/.test(location.hash)) { intro.classList.add('hidden'); return; }
     const homeScreen = document.getElementById('homeScreen');
+    let seenBefore = false;
+    try { seenBefore = localStorage.getItem('bdFamilyVisited') === '1'; } catch (e) {}
+    const firstVisit = !seenBefore;
+    if (firstVisit) { try { localStorage.setItem('bdFamilyVisited', '1'); } catch (e) {} }
 
     let W = 0, H = 0, R = 100, cx = 0, cy = 0;
     function resize() {
@@ -4565,6 +5077,684 @@
     resize();
     window.addEventListener('resize', resize);
     requestAnimationFrame(frame);
-    setTimeout(() => content.classList.add('show'), 1000);
+    if (firstVisit) {
+      // First visit: the globe turns for a few seconds, then the sign-in page appears
+      setTimeout(() => {
+        if (intro.classList.contains('hidden')) return; // already moved on (e.g. guest)
+        running = false;
+        intro.classList.add('hidden');
+        document.getElementById('authHost').classList.remove('hidden');
+      }, 3500);
+    } else {
+      setTimeout(() => content.classList.add('show'), 1000);
+    }
     document.getElementById('enterBtn').addEventListener('click', enter);
   })();
+
+(function authGate() {
+const authHost = document.getElementById('authHost');
+const root = authHost.attachShadow({ mode: 'open' });
+root.appendChild(document.getElementById('authTpl').content.cloneNode(true));
+
+/* ---------- Background: rotating 3D sphere of points and threads ---------- */
+(() => {
+  const c = root.getElementById('web');
+  const ctx = c.getContext('2d');
+  const card = root.getElementById('card');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const GREEN = [255, 255, 255];
+  let W, H, dpr, R, N;
+  let pts = [], edges = [], stars = [];
+  let ry = 0, rx = 0.38, t = 0;
+
+  // Fibonacci sphere: evenly spread points on a unit sphere
+  function build() {
+    N = Math.min(420, Math.max(180, Math.round((W * H) / 3000)));
+    pts = [];
+    const golden = Math.PI * (3 - Math.sqrt(5));
+    for (let i = 0; i < N; i++) {
+      pts.push({ x: Math.random() * 2 - 1, y: Math.random() * 2 - 1, z: Math.random() * 2 - 1, glow: Math.random() < .18 });
+    }
+    // thread each point to its 3 nearest neighbours on the sphere
+    const seen = new Set();
+    edges = [];
+    for (let i = 0; i < N; i++) {
+      const d = pts.map((p, j) => ({ j, d: (p.x - pts[i].x) ** 2 + (p.y - pts[i].y) ** 2 + (p.z - pts[i].z) ** 2 }))
+        .filter(o => o.j !== i).sort((a, b) => a.d - b.d).slice(0, 5);
+      for (const { j } of d) {
+        const k = Math.min(i, j) * N + Math.max(i, j);
+        if (!seen.has(k)) { seen.add(k); edges.push([i, j]); }
+      }
+    }
+    stars = Array.from({ length: 90 }, () => ({
+      x: Math.random(), y: Math.random(), r: Math.random() * 1.1 + .2, a: Math.random() * .5 + .15
+    }));
+  }
+
+  function resize() {
+    dpr = devicePixelRatio || 1;
+    W = innerWidth; H = innerHeight;
+    c.width = W * dpr; c.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    R = Math.hypot(W, H) * .52;
+    build();
+  }
+
+  // rotate a unit vector by ry (around Y) then rx (around X), then project
+  function project(p) {
+    const cy = Math.cos(ry), sy = Math.sin(ry);
+    const x1 = p.x * cy + p.z * sy;
+    const z1 = -p.x * sy + p.z * cy;
+    const cx = Math.cos(rx), sx = Math.sin(rx);
+    const y2 = p.y * cx - z1 * sx;
+    const z2 = p.y * sx + z1 * cx;
+    const k = 1 / (1 + z2 * .22);                 // gentle perspective
+    return { x: W / 2 + x1 * W * .5 * k, y: H / 2 + y2 * H * .5 * k, z: z2, k };
+  }
+
+  // Spider-web background: radial silk spokes, sagging concentric rings, white hub
+  function drawSpiderWeb() {
+    ctx.clearRect(0, 0, W, H);
+    const cx = W / 2, cy = H / 2, S = 24, RINGS = 16;
+    const maxR = Math.hypot(W, H) / 2, step = maxR / RINGS;
+    const spin = reduce ? 0 : t * .0008;
+    const angs = Array.from({ length: S }, (_, i) => spin + (i / S) * Math.PI * 2);
+
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,.16)';
+    ctx.beginPath();
+    for (const a of angs) { ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * maxR, cy + Math.sin(a) * maxR); }
+    ctx.stroke();
+
+    const nodes = [];
+    for (let k = 1; k <= RINGS; k++) {
+      const r = step * k * (1 + Math.sin(t * .01 + k) * .004);
+      const ring = angs.map(a => ({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r }));
+      ctx.strokeStyle = 'rgba(255,255,255,.12)';
+      ctx.beginPath();
+      for (let i = 0; i < S; i++) {
+        const p = ring[i], q = ring[(i + 1) % S];
+        const am = angs[i] + Math.PI / S;
+        ctx.moveTo(p.x, p.y);
+        ctx.quadraticCurveTo(cx + Math.cos(am) * r * .94, cy + Math.sin(am) * r * .94, q.x, q.y);
+      }
+      ctx.stroke();
+      nodes.push(...ring);
+    }
+
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    for (const p of nodes) { ctx.beginPath(); ctx.arc(p.x, p.y, 1.2, 0, 6.283); ctx.fill(); }
+    ctx.fillStyle = 'rgba(255,255,255,.9)';
+    ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 6.283); ctx.fill();
+
+    // silk threads from the card corners and edges to the nearest web nodes
+    const rc = card.getBoundingClientRect();
+    const mx = rc.left + rc.width / 2, my = rc.top + rc.height / 2;
+    const anchors = [
+      [rc.left, rc.top], [rc.right, rc.top], [rc.left, rc.bottom], [rc.right, rc.bottom],
+      [mx, rc.top], [mx, rc.bottom], [rc.left, my], [rc.right, my]
+    ];
+    for (const [ax, ay] of anchors) {
+      const near = nodes
+        .map(p => ({ p, d: Math.hypot(p.x - ax, p.y - ay) }))
+        .sort((u, v) => u.d - v.d).slice(0, 2);
+      for (const { p, d } of near) {
+        if (d > 420) continue;
+        const sag = Math.sin(t * .02 + d) * 8;
+        ctx.strokeStyle = `rgba(255,255,255,${.2 + (1 - d / 420) * .3})`;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.quadraticCurveTo((ax + p.x) / 2 + sag, (ay + p.y) / 2 - sag, p.x, p.y);
+        ctx.stroke();
+      }
+    }
+  }
+
+  let P = [];
+  function frame() {
+    t += 1;
+    drawSpiderWeb();
+    requestAnimationFrame(frame);
+    return;
+    if (!reduce) ry += .0009;
+    rx = .38 + Math.sin(t * .004) * .08;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // faint stars
+    for (const s of stars) {
+      ctx.fillStyle = `rgba(255,255,255,${s.a * .6})`;
+      ctx.beginPath(); ctx.arc(s.x * W, s.y * H, s.r, 0, 6.283); ctx.fill();
+    }
+
+    P = pts.map(project);
+
+    // sphere shell for depth
+    const grd = ctx.createRadialGradient(W / 2, H / 2, R * .6, W / 2, H / 2, R * 1.05);
+    grd.addColorStop(0, 'rgba(255,255,255,0)');
+    grd.addColorStop(.92, 'rgba(255,255,255,0.02)');
+    grd.addColorStop(1, 'rgba(255,255,255,0.06)');
+    ctx.fillStyle = 'rgba(0,0,0,0)';
+    ctx.beginPath(); ctx.arc(W / 2, H / 2, R * 1.05, 0, 6.283); ctx.fill();
+
+    // threads: curved arcs across the sphere surface (slerp-like)
+    const S = 16;
+    for (const [i, j] of edges) {
+      const a = pts[i], b = pts[j];
+      const front = (P[i].z + P[j].z) / 2;
+      const alpha = front > 0 ? .06 + front * .26 : .03 + (front + 1) * .03;
+      ctx.strokeStyle = `rgba(${GREEN[0]},${GREEN[1]},${GREEN[2]},${alpha})`;
+      ctx.lineWidth = front > 0 ? 1 : .6;
+      ctx.beginPath();
+      for (let s = 0; s <= S; s++) {
+        const u = s / S;
+        let x = a.x + (b.x - a.x) * u, y = a.y + (b.y - a.y) * u, z = a.z + (b.z - a.z) * u;
+        const bow = Math.sin(u * Math.PI) * .15;
+        const q = project({ x: x + bow * (b.y - a.y), y: y - bow * (b.x - a.x), z });
+        s ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y);
+      }
+      ctx.stroke();
+    }
+
+    // points: 3D depth-shaded, brighter ones glow
+    for (let i = 0; i < N; i++) {
+      const p = P[i], d = (p.z + 1) / 2;
+      const r = (1 + d * 2.2) * (p.k > 1 ? 1 : .9);
+      const a = .15 + d * .85;
+      if (pts[i].glow && d > .55) {
+        ctx.shadowColor = 'rgba(255,255,255,.9)';
+        ctx.shadowBlur = 12;
+      }
+      ctx.fillStyle = pts[i].glow && d > .55
+        ? `rgba(255,255,255,${a})`
+        : `rgba(255,255,255,${a})`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 6.283); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // threads from the card to the nearest front-facing points
+    const r = card.getBoundingClientRect();
+    const mx = r.left + r.width / 2, my = r.top + r.height / 2;
+    const anchors = [
+      [r.left, r.top], [r.right, r.top], [r.left, r.bottom], [r.right, r.bottom],
+      [mx, r.top], [mx, r.bottom], [r.left, my], [r.right, my]
+    ];
+    for (const [ax, ay] of anchors) {
+      const near = P.map((p, i) => ({ p, d: Math.hypot(p.x - ax, p.y - ay), z: p.z, i }))
+        .filter(o => o.z > -.1)
+        .sort((u, v) => u.d - v.d).slice(0, 2);
+      for (const o of near) {
+        if (o.d > 420) continue;
+        const sag = Math.sin(t * .02 + o.d) * 10;
+        const cxp = (ax + o.p.x) / 2 - (o.p.y - ay) * .15 + sag;
+        const cyp = (ay + o.p.y) / 2 + (o.p.x - ax) * .15 - sag;
+        ctx.strokeStyle = `rgba(255,255,255,${.2 + (1 - o.d / 420) * .3})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(cxp, cyp, o.p.x, o.p.y); ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(255,255,255,.9)';
+      ctx.beginPath(); ctx.arc(ax, ay, 2, 0, 6.283); ctx.fill();
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  addEventListener('resize', resize);
+  resize();
+  requestAnimationFrame(frame);
+})();
+
+/* ---------- App flows ---------- */
+const $ = s => root.querySelector(s);
+const $$ = s => [...root.querySelectorAll(s)];
+const toastEl = $('#toast');
+let toastTimer, pendingEmail = '', pendingName = '', otpCode = '';
+
+function toast(msg, ms = 3800) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), ms);
+}
+
+function show(id) {
+  $$('.view').forEach(v => v.classList.toggle('active', v.id === id));
+}
+
+function showAuth(pane) {
+  show('auth');
+  $$('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === pane ? 'true' : 'false'));
+  $('#loginForm').hidden = pane !== 'login';
+  $('#signupForm').hidden = pane !== 'signup';
+  $('#switchRow').innerHTML = pane === 'login'
+    ? "Don't have an account yet? <button class=\"link\" id=\"toSignup\" type=\"button\">Register</button>"
+    : "Already have an account? <button class=\"link\" id=\"toLogin\" type=\"button\">Log in</button>";
+  $('#toSignup')?.addEventListener('click', () => showAuth('signup'));
+  $('#toLogin')?.addEventListener('click', () => showAuth('login'));
+}
+
+function setErr(id, msg) {
+  const el = root.querySelector(`[data-for="${id}"]`);
+  if (el) el.textContent = msg || '';
+  root.getElementById(id).style.borderColor = msg ? 'var(--err)' : '';
+}
+
+const emailOK = v => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim());
+
+function clearErrs(form) {
+  form.querySelectorAll('.err').forEach(e => e.textContent = '');
+  form.querySelectorAll('input').forEach(i => i.style.borderColor = '');
+}
+
+function enterApp(name, email) {
+  const initials = name.split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase() || 'BD';
+  $('#avatar').textContent = initials;
+  $('#pName').textContent = name;
+  $('#pMail').textContent = email;
+  show('profile');
+  toast(`Welcome, ${name.split(' ')[0]}`);
+}
+
+function sendOTP(email) {
+  pendingEmail = email;
+  otpCode = String(Math.floor(100000 + Math.random() * 900000));
+  $('#otpEmail').textContent = email;
+  $$('#otpBoxes input').forEach(i => i.value = '');
+  $('#otpErr').textContent = '';
+  show('otp');
+  $$('#otpBoxes input')[0].focus();
+  // Demo only: a real build emails this code via SMTP.
+  toast(`Demo code: ${otpCode}`, 8000);
+}
+
+$$('.tab').forEach(t => t.addEventListener('click', () => showAuth(t.dataset.tab)));
+$('#forgotBtn').addEventListener('click', () => { $('#fEmail').value = $('#lEmail').value; show('forgot'); });
+$('#forgotBack').addEventListener('click', () => showAuth('login'));
+$('#otpBack').addEventListener('click', () => showAuth('signup'));
+
+$('#loginForm').addEventListener('submit', e => {
+  e.preventDefault();
+  clearErrs(e.target);
+  const email = $('#lEmail').value, pass = $('#lPass').value;
+  let ok = true;
+  if (!emailOK(email)) { setErr('lEmail', 'Enter a valid email address.'); ok = false; }
+  if (pass.length < 8) { setErr('lPass', 'Password must be at least 8 characters.'); ok = false; }
+  if (!ok) return;
+  enterApp(email.split('@')[0], email);
+});
+
+$('#signupForm').addEventListener('submit', e => {
+  e.preventDefault();
+  clearErrs(e.target);
+  const name = $('#sName').value.trim(), email = $('#sEmail').value, pass = $('#sPass').value;
+  let ok = true;
+  if (name.length < 2) { setErr('sName', 'Enter your full name.'); ok = false; }
+  if (!emailOK(email)) { setErr('sEmail', 'Enter a valid email address.'); ok = false; }
+  if (pass.length < 8) { setErr('sPass', 'Use at least 8 characters.'); ok = false; }
+  if (!ok) return;
+  pendingName = name;
+  sendOTP(email);
+});
+
+const boxes = $$('#otpBoxes input');
+boxes.forEach((box, i) => {
+  box.addEventListener('input', () => {
+    box.value = box.value.replace(/\D/g, '').slice(0, 1);
+    if (box.value && boxes[i + 1]) boxes[i + 1].focus();
+  });
+  box.addEventListener('keydown', e => {
+    if (e.key === 'Backspace' && !box.value && boxes[i - 1]) boxes[i - 1].focus();
+  });
+  box.addEventListener('paste', e => {
+    e.preventDefault();
+    const digits = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+    digits.split('').forEach((d, k) => { if (boxes[k]) boxes[k].value = d; });
+    (boxes[Math.min(digits.length, 5)] || box).focus();
+  });
+});
+
+$('#verifyBtn').addEventListener('click', () => {
+  const code = boxes.map(b => b.value).join('');
+  if (code.length < 6) { $('#otpErr').textContent = 'Enter all 6 digits.'; return; }
+  if (code !== otpCode) { $('#otpErr').textContent = 'That code is incorrect. Try again or resend.'; return; }
+  $('#otpErr').textContent = '';
+  enterApp(pendingName, pendingEmail);
+});
+
+$('#resendBtn').addEventListener('click', () => sendOTP(pendingEmail));
+
+$('#forgot').addEventListener('submit', e => {
+  e.preventDefault();
+  clearErrs(e.target);
+  const email = $('#fEmail').value;
+  if (!emailOK(email)) { setErr('fEmail', 'Enter a valid email address.'); return; }
+  toast('If that account exists, a reset email is on its way.');
+  showAuth('login');
+});
+
+$('#googleBtn').addEventListener('click', () => enterApp('Family Member', 'member@gmail.com'));
+$('#guestBtn').addEventListener('click', () => { $('#guestBtn').hidden = true; enterApp('Guest', 'guest@family.web'); $('#openHomeBtn').click(); });
+showAuth('login');
+
+$$('.eye').forEach(btn => btn.addEventListener('click', () => {
+  const inp = root.getElementById(btn.dataset.eye);
+  const reveal = inp.type === 'password';
+  inp.type = reveal ? 'text' : 'password';
+  btn.textContent = reveal ? 'Hide' : 'Show';
+  btn.setAttribute('aria-label', reveal ? 'Hide password' : 'Show password');
+  inp.focus();
+}));
+
+$('#logoutBtn').addEventListener('click', () => {
+  $('#guestBtn').hidden = false;
+  $('#lPass').value = '';
+  showAuth('login');
+  toast('You have been logged out.');
+});
+/* ---------- Left panel: galaxy under fiery asteroid attack ---------- */
+(() => {
+  const cv = root.getElementById('space');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let W = 0, H = 0, dpr = 1, t = 0, stars = [], rocks = [], sparks = [], blasts = [];
+  const gx = () => W * .6, gy = () => H * .42;
+
+  function resize() {
+    const r = cv.getBoundingClientRect();
+    dpr = devicePixelRatio || 1;
+    W = r.width; H = r.height;
+    cv.width = W * dpr; cv.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    stars = Array.from({ length: 180 }, () => ({
+      x: Math.random() * W, y: Math.random() * H,
+      r: Math.random() * 1.2 + .2, a: Math.random() * .6 + .3, tw: Math.random() * 6.28
+    }));
+  }
+
+  function spawnRock() {
+    const fromTop = Math.random() < .5;
+    const x = fromTop ? Math.random() * W : -30;
+    const y = fromTop ? -30 : Math.random() * H;
+    const tx = gx() + (Math.random() - .5) * 50, ty = gy() + (Math.random() - .5) * 50;
+    const ang = Math.atan2(ty - y, tx - x), sp = .7 + Math.random() * .4;
+    rocks.push({
+      x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+      size: 14 + Math.random() * 14, rot: Math.random() * 6.28, vr: (Math.random() - .5) * .04,
+      verts: Array.from({ length: 18 }, () => .6 + Math.random() * .5),
+      craters: Array.from({ length: 5 }, () => ({ x: (Math.random() - .5) * 1.1, y: (Math.random() - .5) * 1.1, r: .08 + Math.random() * .14 })),
+      trail: [], dead: false
+    });
+  }
+
+  function burst(x, y) {
+    blasts.push({ x, y, r: 4, life: 1 });
+    for (let i = 0; i < 40; i++) {
+      const a = Math.random() * 6.28, sp = Math.random() * 4 + 1;
+      sparks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1 });
+    }
+  }
+
+  function drawGalaxy() {
+    const cx = gx(), cy = gy(), spin = t * .0006, R = Math.max(W, H) * .34;
+    const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+    core.addColorStop(0, 'rgba(255,236,210,.95)');
+    core.addColorStop(.07, 'rgba(255,170,110,.55)');
+    core.addColorStop(.3, 'rgba(150,110,255,.2)');
+    core.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = core;
+    ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.283); ctx.fill();
+    for (let arm = 0; arm < 2; arm++) {
+      for (let i = 0; i < 280; i++) {
+        const k = i / 280;
+        const a = spin + arm * Math.PI + k * 4.4;
+        const rad = 8 + k * R * .9;
+        const x = cx + Math.cos(a) * rad * 1.3, y = cy + Math.sin(a) * rad * .5;
+        ctx.fillStyle = `rgba(220,200,255,${.55 * (1 - k) + .05})`;
+        ctx.fillRect(x, y, 1.5, 1.5);
+      }
+    }
+  }
+
+  function frame() {
+    t += 1;
+    ctx.clearRect(0, 0, W, H);
+
+    for (const s of stars) {
+      ctx.fillStyle = `rgba(255,255,255,${s.a * (.6 + .4 * Math.sin(t * .03 + s.tw))})`;
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 6.283); ctx.fill();
+    }
+    drawGalaxy();
+
+    if (!reduce && Math.random() < .008 && rocks.length < 2) spawnRock();
+
+    for (const rk of rocks) {
+      rk.x += rk.vx; rk.y += rk.vy; rk.rot += rk.vr;
+      rk.trail.push({ x: rk.x, y: rk.y });
+      if (rk.trail.length > 34) rk.trail.shift();
+      const spd = Math.hypot(rk.vx, rk.vy) || 1, nx = -rk.vy / spd, ny = rk.vx / spd;
+      ctx.globalCompositeOperation = 'lighter';
+      rk.trail.forEach((p, i) => {
+        const f = (i + 1) / rk.trail.length;
+        const zig = Math.sin(t * .35 + i * 1.3) * rk.size * .9 * f;
+        for (let k = 0; k < 3; k++) {
+          const jx = (Math.random() - .5) * rk.size * f * 1.2, jy = (Math.random() - .5) * rk.size * f * 1.2;
+          const px = p.x + nx * zig + jx, py = p.y + ny * zig + jy;
+          const rr = rk.size * (.12 + f * .45) * (.6 + Math.random() * .6);
+          const g = ctx.createRadialGradient(px, py, 0, px, py, rr);
+          g.addColorStop(0, `rgba(255,${230 - f * 90},${170 - f * 120},${f * .45})`);
+          g.addColorStop(1, 'rgba(255,90,20,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(px, py, rr, 0, 6.283); ctx.fill();
+        }
+      });
+      ctx.globalCompositeOperation = 'source-over';
+      if (!rk.streaks) rk.streaks = Array.from({ length: 9 }, () => ({ off: (Math.random() - .5) * rk.size * 2.4, ph: Math.random() * 6.28, len: 40 + Math.random() * 70 }));
+      for (const st of rk.streaks) {
+        ctx.strokeStyle = 'rgba(255,190,110,.22)'; ctx.lineWidth = .7;
+        ctx.beginPath();
+        for (let k = 0; k <= 12; k++) {
+          const u = k / 12, d = u * st.len;
+          const wig = Math.sin(t * .4 + st.ph + u * 5) * rk.size * .35 * u;
+          const sx = rk.x - (rk.vx / spd) * d + nx * (st.off + wig);
+          const sy = rk.y - (rk.vy / spd) * d + ny * (st.off + wig);
+          k ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy);
+        }
+        ctx.stroke();
+      }
+      ctx.save();
+      ctx.translate(rk.x, rk.y); ctx.rotate(rk.rot);
+      const halo = ctx.createRadialGradient(0, 0, rk.size * .5, 0, 0, rk.size * 3);
+      halo.addColorStop(0, 'rgba(255,240,190,.9)'); halo.addColorStop(.35, 'rgba(255,170,60,.5)'); halo.addColorStop(.75, 'rgba(255,120,60,.08)'); halo.addColorStop(1, 'rgba(255,90,30,0)');
+      ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(0, 0, rk.size * 3, 0, 6.283); ctx.fill();
+      const path = () => {
+        ctx.beginPath();
+        rk.verts.forEach((v, i) => {
+          const a = i / rk.verts.length * 6.283, rr = rk.size * v;
+          i ? ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
+        });
+        ctx.closePath();
+      };
+      path();
+      const body = ctx.createLinearGradient(rk.size, rk.size, -rk.size * .6, -rk.size * .6);
+      body.addColorStop(0, '#ffe7b0'); body.addColorStop(.5, '#b5612e'); body.addColorStop(1, '#3a1d0e');
+      ctx.fillStyle = body; ctx.fill();
+      ctx.save(); path(); ctx.clip();
+      rk.craters.forEach(c => {
+        ctx.fillStyle = 'rgba(90,35,10,.4)';
+        ctx.beginPath(); ctx.arc(c.x * rk.size, c.y * rk.size, c.r * rk.size, 0, 6.283); ctx.fill();
+      });
+      if (!rk.speck) rk.speck = Array.from({ length: 70 }, () => ({ x: (Math.random() - .5) * 2, y: (Math.random() - .5) * 2, r: .02 + Math.random() * .05, b: Math.random() }));
+      rk.speck.forEach(s => {
+        ctx.fillStyle = s.b > .5 ? 'rgba(255,230,180,.3)' : 'rgba(40,15,5,.5)';
+        ctx.beginPath(); ctx.arc(s.x * rk.size, s.y * rk.size, s.r * rk.size, 0, 6.283); ctx.fill();
+      });
+      ctx.restore();
+      ctx.strokeStyle = 'rgba(255,200,130,.35)'; ctx.lineWidth = 1; path(); ctx.stroke();
+      ctx.restore();
+
+      if (Math.hypot(rk.x - gx(), rk.y - gy()) < 26) { burst(rk.x, rk.y); rk.dead = true; }
+      if (rk.x < -60 || rk.x > W + 60 || rk.y < -60 || rk.y > H + 60) rk.dead = true;
+    }
+    rocks = rocks.filter(r => !r.dead);
+
+    for (const b of blasts) {
+      b.r += 2.2; b.life -= .025;
+      const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * 2.5);
+      g.addColorStop(0, `rgba(255,240,210,${b.life * .9})`);
+      g.addColorStop(.4, `rgba(255,120,40,${b.life * .45})`);
+      g.addColorStop(1, 'rgba(255,60,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 2.5, 0, 6.283); ctx.fill();
+      ctx.strokeStyle = `rgba(255,150,70,${b.life * .7})`; ctx.lineWidth = 2 * b.life + .5;
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 3, 0, 6.283); ctx.stroke();
+    }
+    blasts = blasts.filter(b => b.life > 0);
+
+    for (const s of sparks) {
+      s.x += s.vx; s.y += s.vy; s.vy += .03; s.life -= .03;
+      ctx.fillStyle = `rgba(255,${150 + s.life * 90},60,${Math.max(s.life, 0)})`;
+      ctx.fillRect(s.x, s.y, 2, 2);
+    }
+    sparks = sparks.filter(s => s.life > 0);
+
+    if (!reduce) requestAnimationFrame(frame);
+  }
+
+  addEventListener('resize', resize);
+  resize();
+  requestAnimationFrame(frame);
+})();
+
+/* Side profile: Login opens the sign-in page, Sign out returns to it */
+function closeSideProfile() {
+  document.getElementById('profilePage').classList.remove('open');
+  document.getElementById('profileScrim').classList.remove('open');
+}
+document.getElementById('sideLoginBtn').addEventListener('click', () => {
+  closeSideProfile();
+  showAuth('login');
+  document.getElementById('authHost').classList.remove('hidden');
+});
+document.getElementById('sideSignoutBtn').addEventListener('click', () => {
+  closeSideProfile();
+  $('#guestBtn').hidden = false;
+  $('#lPass').value = '';
+  document.getElementById('profileShownName').textContent = 'Guest';
+  document.getElementById('homeScreen').classList.add('hidden');
+  showAuth('login');
+  document.getElementById('authHost').classList.remove('hidden');
+  toast('You have been signed out.');
+});
+
+/* Open the home page after sign-in or guest */
+$('#openHomeBtn').addEventListener('click', () => {
+  document.getElementById('profileShownName').textContent = $('#pName').textContent;
+  document.getElementById('introScreen').classList.add('hidden');
+  document.getElementById('authHost').classList.add('hidden');
+  document.getElementById('homeScreen').classList.remove('hidden');
+});
+})();
+
+/* Swipe right on the profile panel to go back (close it) */
+(function profileSwipe() {
+  const panel = document.getElementById('profilePage');
+  const scrim = document.getElementById('profileScrim');
+  if (!panel) return;
+  const CLOSE_AT = 90;            // px dragged before the panel closes
+  let startX = 0, startY = 0, dx = 0, tracking = false, horizontal = null;
+
+  panel.addEventListener('touchstart', (e) => {
+    if (!panel.classList.contains('open') || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    startX = t.clientX; startY = t.clientY;
+    dx = 0; horizontal = null; tracking = true;
+    panel.style.transition = 'none';
+  }, { passive: true });
+
+  panel.addEventListener('touchmove', (e) => {
+    if (!tracking) return;
+    const t = e.touches[0];
+    const ddx = t.clientX - startX, ddy = t.clientY - startY;
+    if (horizontal === null && (Math.abs(ddx) > 8 || Math.abs(ddy) > 8)) {
+      horizontal = Math.abs(ddx) > Math.abs(ddy);   // ignore mostly-vertical scrolling
+    }
+    if (!horizontal) return;
+    dx = Math.max(0, ddx);                          // only drag to the right
+    panel.style.transform = `translateX(${dx}px)`;
+  }, { passive: true });
+
+  function finish() {
+    if (!tracking) return;
+    tracking = false;
+    panel.style.transition = '';
+    panel.style.transform = '';                     // back to the CSS position
+    if (horizontal && dx > CLOSE_AT) {
+      panel.classList.remove('open');
+      if (scrim) scrim.classList.remove('open');
+    }
+  }
+  panel.addEventListener('touchend', finish);
+  panel.addEventListener('touchcancel', finish);
+})();
+
+/* Swipe in from either screen edge (left or right) to go back, on every page */
+(function edgeSwipeBack() {
+  const EDGE = 32;          // px from the left or right edge where a swipe may start
+  const MIN_DX = 70;        // px of horizontal travel needed
+  const isOpen = (id) => { const el = document.getElementById(id); return !!el && !el.classList.contains('hidden'); };
+
+  // Top layer first: modals and popups, then pages from the deepest to the home page
+  const LAYERS = [
+    { open: () => isOpen('helpModal'),   back: 'hpClose' },
+    { open: () => isOpen('groupModal'),  back: 'gClose' },
+    { open: () => isOpen('personModal'), back: 'pCancel' },
+    { open: () => isOpen('langModal'),   back: 'langClose' },
+    { open: () => { const c = document.getElementById('personCard'); return !!c && c.classList.contains('show'); }, back: 'pcClose' },
+    { open: () => isOpen('aboutScreen'),    back: 'aboutBackBtn' },
+    { open: () => isOpen('settingsScreen'), back: 'settingsBackBtn' },
+    { open: () => isOpen('sharedScreen'),   back: 'sharedBackBtn' },
+    { open: () => isOpen('treeScreen'),     back: 'treeBackBtn' },
+    { open: () => isOpen('projectScreen'),  back: 'backBtn' }
+  ];
+
+  function goBack() {
+    // The side profile panel has its own swipe-to-close, so leave it alone here
+    if (document.getElementById('profilePage').classList.contains('open')) return;
+    // The last five entries of LAYERS are the pages. If none is open we are on the
+    // home page, which is the main page to leave from, so swipes do nothing there.
+    const PAGE_LAYERS = LAYERS.slice(5);
+    if (!PAGE_LAYERS.some(l => l.open())) return;
+    const layer = LAYERS.find(l => l.open());   // a popup on a page closes first
+    const btn = document.getElementById(layer.back);
+    if (btn) btn.click();
+  }
+
+  // On the home page, edge swipes must not close anything (home is the main page to leave).
+  // The app's popup swipe-to-close is blocked there only; it keeps working on other pages.
+  window.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) return;
+    const x = e.touches[0].clientX;
+    const atEdge = x <= EDGE || x >= window.innerWidth - EDGE;
+    const profileOpen = document.getElementById('profilePage').classList.contains('open');
+    const pageOpen = LAYERS.slice(5).some(l => l.open());
+    if (atEdge && !profileOpen && !pageOpen) e.stopImmediatePropagation();
+  }, { capture: true, passive: true });
+
+  let sx = 0, sy = 0, active = false;
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1) { active = false; return; }
+    const x = e.touches[0].clientX;
+    active = (x <= EDGE || x >= window.innerWidth - EDGE);
+    sx = x; sy = e.touches[0].clientY;
+  }, { passive: true });
+
+  document.addEventListener('touchend', (e) => {
+    if (!active) return;
+    active = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) >= MIN_DX && Math.abs(dx) > 1.5 * Math.abs(dy)) goBack();
+  }, { passive: true });
+  document.addEventListener('touchcancel', () => { active = false; }, { passive: true });
+})();
